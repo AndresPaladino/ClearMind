@@ -14,7 +14,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useFontScale, FONT_SCALE_STEP, DEFAULT_FONT_SCALE } from "./hooks/useFontScale";
 import { useCursorHide } from "./hooks/useCursorHide";
 import { useAutoSave } from "./hooks/useAutoSave";
-import { useTypewriterMode } from "./hooks/useTypewriterMode";
+
 
 function App() {
   const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
@@ -29,10 +29,11 @@ function App() {
   const { fontScale, updateFontScale } = useFontScale();
   const { isTyping, setIsTyping } = useCursorHide();
   const { saveTimeoutRef, contentRef, scheduleSave } = useAutoSave(currentEntry);
-  const { isTypewriterMode, toggleTypewriterMode } = useTypewriterMode();
 
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const idleHintRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoomIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showZoomIndicator, setShowZoomIndicator] = useState(false);
 
   useEffect(() => {
     loadCurrentEntry();
@@ -249,16 +250,15 @@ function App() {
       }, 0);
     };
 
+    const flashZoomIndicator = () => {
+      if (zoomIndicatorTimeoutRef.current) clearTimeout(zoomIndicatorTimeoutRef.current);
+      setShowZoomIndicator(true);
+      zoomIndicatorTimeoutRef.current = setTimeout(() => setShowZoomIndicator(false), 800);
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
-
-      // Typewriter mode toggle: Cmd+Shift+T
-      if (e.key.toLowerCase() === "t" && e.shiftKey) {
-        e.preventDefault();
-        toggleTypewriterMode();
-        return;
-      }
 
       // Command palette
       if (e.key.toLowerCase() === "k") {
@@ -271,7 +271,8 @@ function App() {
       if (e.key === "+" || e.key === "=") {
         e.preventDefault();
         updateFontScale((prev) => prev + FONT_SCALE_STEP);
-        scrollCursorAfterReflow();
+        //scrollCursorAfterReflow();
+        flashZoomIndicator();
         return;
       }
 
@@ -279,7 +280,8 @@ function App() {
       if (e.key === "-") {
         e.preventDefault();
         updateFontScale((prev) => prev - FONT_SCALE_STEP);
-        scrollCursorAfterReflow();
+        //scrollCursorAfterReflow();
+        flashZoomIndicator();
         return;
       }
 
@@ -287,13 +289,28 @@ function App() {
       if (e.key === "0") {
         e.preventDefault();
         updateFontScale(DEFAULT_FONT_SCALE);
-        scrollCursorAfterReflow();
+        //scrollCursorAfterReflow();
+        flashZoomIndicator();
       }
     };
 
+    // Pinch-to-zoom via trackpad (browsers report pinch as wheel + ctrlKey)
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const delta = -e.deltaY * 0.01;
+      updateFontScale((prev) => prev + delta);
+      scrollCursorAfterReflow();
+      flashZoomIndicator();
+    };
+
     document.addEventListener("keydown", handleKeyDown, true);
-    return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [updateFontScale, toggleTypewriterMode]);
+    document.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("wheel", handleWheel);
+    };
+  }, [updateFontScale]);
 
   if (!currentEntry) return null;
 
@@ -303,7 +320,7 @@ function App() {
 
   const contentRootStyle = {
     fontSize: `${18 * fontScale}px`,
-    lineHeight: 1.7,
+    lineHeight: '1.6em',
     ["--editor-paragraph-spacing" as string]: `${0.9 * fontScale}rem`,
   } as CSSProperties;
 
@@ -380,7 +397,6 @@ function App() {
               onEditorReady={(e) => {
                 lexicalEditorRef.current = e;
               }}
-              isTypewriterMode={isTypewriterMode}
             />
 
             {showOnboarding && (
@@ -397,9 +413,9 @@ function App() {
 
       {createPortal(
         <div style={{ position: "fixed", bottom: 20, right: 24, zIndex: 1200, display: "flex", alignItems: "center", gap: 8 }}>
-          {isTypewriterMode && (
-            <span className="typewriter-indicator visible">TW</span>
-          )}
+          <span className={`zoom-indicator${showZoomIndicator ? " visible" : ""}`}>
+            {Math.round(fontScale * 100)}%
+          </span>
           <EntryIndicator
             date={currentEntry.date}
             number={currentEntry.number}

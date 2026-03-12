@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -38,7 +38,6 @@ interface EditorProps {
   onTypingStart: () => void;
   onTypingStop: () => void;
   onEditorReady?: (editor: LexicalEditor) => void;
-  isTypewriterMode: boolean;
 }
 
 function EditorReadyPlugin({ onReady }: { onReady?: (editor: LexicalEditor) => void }) {
@@ -128,6 +127,39 @@ function BlockResetPlugin() {
   return null;
 }
 
+/** Scroll the .scroll-container only if the cursor is outside the visible area. */
+function scrollCursorIntoViewIfNeeded() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+
+  const range = sel.getRangeAt(0);
+  let rect = range.getBoundingClientRect();
+
+  // Collapsed range in an empty element may return a zero rect — fall back to the element.
+  if (rect.top === 0 && rect.bottom === 0) {
+    const node = sel.focusNode;
+    const element = node instanceof HTMLElement ? node : node?.parentElement;
+    if (!element) return;
+    rect = element.getBoundingClientRect();
+  }
+
+  const scrollContainer = document.querySelector(".scroll-container") as HTMLElement | null;
+  if (!scrollContainer) return;
+
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const cursorTop = rect.top - containerRect.top;
+  const cursorBottom = rect.bottom - containerRect.top;
+  const margin = scrollContainer.clientHeight * 0.08;
+
+  // Only scroll if the cursor is outside the visible area (with a small margin)
+  if (cursorTop >= margin && cursorBottom <= scrollContainer.clientHeight - margin) return;
+
+  const cursorY = cursorTop + scrollContainer.scrollTop;
+  const targetY = scrollContainer.clientHeight * 0.2;
+
+  scrollContainer.scrollTo({ top: cursorY - targetY, behavior: "smooth" });
+}
+
 function CursorRestorePlugin({ entryId }: { entryId: string }) {
   const [editor] = useLexicalComposerContext();
 
@@ -176,26 +208,11 @@ function CursorRestorePlugin({ entryId }: { entryId: string }) {
         }
       });
 
-      // Scroll cursor into view
+      // Scroll cursor into view, then focus — order matters to avoid browser focus-scroll.
       requestAnimationFrame(() => {
-        const sel = window.getSelection();
-        if (sel && sel.rangeCount > 0) {
-          const node = sel.getRangeAt(0).startContainer;
-          const el = node instanceof HTMLElement ? node : node.parentElement;
-          if (el) {
-            const scrollContainer = el.closest(".scroll-container") as HTMLElement | null;
-            if (scrollContainer) {
-              const rect = el.getBoundingClientRect();
-              const containerRect = scrollContainer.getBoundingClientRect();
-              const cursorY = rect.top - containerRect.top + scrollContainer.scrollTop;
-              const targetY = scrollContainer.clientHeight * 0.4;
-              scrollContainer.scrollTo({ top: cursorY - targetY, behavior: "smooth" });
-            }
-          }
-        }
+        scrollCursorIntoViewIfNeeded();
+        editor.focus();
       });
-
-      editor.focus();
     });
 
     return () => cancelAnimationFrame(frame);
@@ -225,45 +242,6 @@ function EditorSyncPlugin({
   return null;
 }
 
-function TypewriterPlugin({ enabled }: { enabled: boolean }) {
-  const [editor] = useLexicalComposerContext();
-
-  useEffect(() => {
-    if (!enabled) return;
-
-    return editor.registerUpdateListener(() => {
-      requestAnimationFrame(() => {
-        const sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0) return;
-
-        const range = sel.getRangeAt(0);
-        let rect = range.getBoundingClientRect();
-
-        if (rect.top === 0 && rect.bottom === 0) {
-          const node = sel.focusNode;
-          const element = node instanceof HTMLElement ? node : node?.parentElement;
-          if (!element) return;
-          rect = element.getBoundingClientRect();
-        }
-
-        const scrollContainer = document.querySelector(".scroll-container") as HTMLElement | null;
-        if (!scrollContainer) return;
-
-        const containerRect = scrollContainer.getBoundingClientRect();
-        const cursorY = rect.top - containerRect.top + scrollContainer.scrollTop;
-        const targetY = scrollContainer.clientHeight * 0.4;
-
-        scrollContainer.scrollTo({
-          top: cursorY - targetY,
-          behavior: "smooth",
-        });
-      });
-    });
-  }, [editor, enabled]);
-
-  return null;
-}
-
 export default function Editor({
   entry,
   onContentChange,
@@ -271,13 +249,11 @@ export default function Editor({
   onTypingStart,
   onTypingStop,
   onEditorReady,
-  isTypewriterMode,
 }: EditorProps) {
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cursorSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadedRef = useRef(false);
   const lexicalRef = useRef<LexicalEditor | null>(null);
-  const [isFirstLine, setIsFirstLine] = useState(true);
 
   useEffect(() => {
     isLoadedRef.current = false;
@@ -293,8 +269,7 @@ export default function Editor({
   }, [onEditorReady]);
 
   const handleContentChange = useCallback(
-    (markdown: string, plainText: string) => {
-    setIsFirstLine(!plainText.includes("\n"));
+    (markdown: string) => {
     onContentChange(markdown);
     onTypingStart();
 
@@ -347,7 +322,7 @@ export default function Editor({
   };
 
   return (
-    <div className={`editor-area ${isFirstLine ? "first-line" : ""}`}>
+    <div className="editor-area">
       <LexicalComposer key={entry.id} initialConfig={initialConfig}>
         <EditorReadyPlugin onReady={handleEditorReady} />
         <EditorSyncPlugin
@@ -371,17 +346,18 @@ export default function Editor({
         <ListPlugin />
         <BlockResetPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
-        <TypewriterPlugin enabled={isTypewriterMode} />
         <OnChangePlugin
           onChange={(editorState) => {
+            // Skip mount-time changes from EditorSyncPlugin / CursorRestorePlugin
+            if (!isLoadedRef.current) return;
+
             editorState.read(() => {
               const markdown = $convertToMarkdownString(TRANSFORMERS);
-              const plainText = $getRoot().getTextContent();
-              handleContentChange(markdown, plainText);
+              handleContentChange(markdown);
             });
 
             // Save cursor position (debounced)
-            if (isLoadedRef.current && lexicalRef.current) {
+            if (lexicalRef.current) {
               if (cursorSaveRef.current) clearTimeout(cursorSaveRef.current);
               cursorSaveRef.current = setTimeout(() => {
                 lexicalRef.current?.getEditorState().read(() => {

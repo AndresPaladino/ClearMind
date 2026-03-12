@@ -22,7 +22,7 @@ export function useFontScale() {
     (next: number | ((prev: number) => number)) => {
       setFontScale((prev) => {
         const raw = typeof next === "function" ? next(prev) : next;
-        const clamped = clamp(raw, FONT_SCALE_MIN, FONT_SCALE_MAX);
+        const clamped = Math.round(clamp(raw, FONT_SCALE_MIN, FONT_SCALE_MAX) * 100) / 100;
         localStorage.setItem("clearmind-font-scale", String(clamped));
         return clamped;
       });

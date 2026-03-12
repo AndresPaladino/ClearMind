@@ -207,6 +207,11 @@ body {
   background: rgba(255, 255, 255, 0.85);
 }
 
+/* Smooth zoom transition */
+.content-root {
+  transition: font-size 150ms ease-out;
+}
+
 /* Shared editor + readonly typography */
 .editor-textarea,
 .entry-content-readonly {
@@ -306,23 +311,12 @@ body {
 .editor-area {
   display: flex;
   flex-direction: column;
-}
-
-.editor-area.first-line {
-  align-items: center;
-  justify-content: flex-start;
-  padding-top: 40vh;
-  padding-bottom: 50vh;
-}
-
-.editor-area:not(.first-line) {
-  padding-top: 40vh;
+  padding-top: 20vh;
   padding-bottom: 50vh;
 }
 
 .editor-textarea {
   width: 100%;
-  min-height: 28px;
   border: none;
   outline: none;
   background: transparent;
@@ -337,15 +331,10 @@ body {
   min-height: 1.75em;
 }
 
-.editor-area.first-line .editor-textarea {
-  width: 100%;
-  text-align: left;
-}
-
 .editor-textarea p {
   margin: 0 0 var(--editor-paragraph-spacing);
   font-size: inherit;
-  line-height: inherit;
+  line-height: 1.6em;
 }
 
 .editor-textarea p:last-child {
@@ -711,17 +700,18 @@ body.hide-cursor * {
   cursor: nesw-resize;
 }
 
-/* Typewriter mode indicator */
-.typewriter-indicator {
+/* Zoom level indicator */
+.zoom-indicator {
   color: var(--text-muted);
   font-size: var(--ui-font-size-xs);
   letter-spacing: var(--ui-letter-spacing);
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
   user-select: none;
   opacity: 0;
-  transition: opacity 0.4s ease, color 180ms ease;
+  transition: opacity 0.3s ease;
 }
 
-.typewriter-indicator.visible {
+.zoom-indicator.visible {
   opacity: 0.35;
 }
