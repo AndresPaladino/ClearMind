@@ -24,6 +24,7 @@ import {
   $isElementNode,
   $createParagraphNode,
   KEY_BACKSPACE_COMMAND,
+  FORMAT_TEXT_COMMAND,
   COMMAND_PRIORITY_LOW,
   type LexicalEditor,
 } from "lexical";
@@ -127,37 +128,23 @@ function BlockResetPlugin() {
   return null;
 }
 
-/** Scroll the .scroll-container only if the cursor is outside the visible area. */
-function scrollCursorIntoViewIfNeeded() {
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
+function StrikethroughPlugin() {
+  const [editor] = useLexicalComposerContext();
 
-  const range = sel.getRangeAt(0);
-  let rect = range.getBoundingClientRect();
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        editor.dispatchCommand(FORMAT_TEXT_COMMAND, "strikethrough");
+      }
+    };
+    return editor.registerRootListener((root, prev) => {
+      prev?.removeEventListener("keydown", onKeyDown);
+      root?.addEventListener("keydown", onKeyDown);
+    });
+  }, [editor]);
 
-  // Collapsed range in an empty element may return a zero rect — fall back to the element.
-  if (rect.top === 0 && rect.bottom === 0) {
-    const node = sel.focusNode;
-    const element = node instanceof HTMLElement ? node : node?.parentElement;
-    if (!element) return;
-    rect = element.getBoundingClientRect();
-  }
-
-  const scrollContainer = document.querySelector(".scroll-container") as HTMLElement | null;
-  if (!scrollContainer) return;
-
-  const containerRect = scrollContainer.getBoundingClientRect();
-  const cursorTop = rect.top - containerRect.top;
-  const cursorBottom = rect.bottom - containerRect.top;
-  const margin = scrollContainer.clientHeight * 0.08;
-
-  // Only scroll if the cursor is outside the visible area (with a small margin)
-  if (cursorTop >= margin && cursorBottom <= scrollContainer.clientHeight - margin) return;
-
-  const cursorY = cursorTop + scrollContainer.scrollTop;
-  const targetY = scrollContainer.clientHeight * 0.2;
-
-  scrollContainer.scrollTo({ top: cursorY - targetY, behavior: "smooth" });
+  return null;
 }
 
 function CursorRestorePlugin({ entryId }: { entryId: string }) {
@@ -165,6 +152,11 @@ function CursorRestorePlugin({ entryId }: { entryId: string }) {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
+      // Save scroll position before cursor restore — editor.update() sets the
+      // native selection which makes the browser auto-scroll to the cursor.
+      const container = document.querySelector(".scroll-container");
+      const scrollBefore = container?.scrollTop;
+
       editor.update(() => {
         const root = $getRoot();
         const stored = localStorage.getItem(`clearmind-cursor-${entryId}`);
@@ -208,11 +200,13 @@ function CursorRestorePlugin({ entryId }: { entryId: string }) {
         }
       });
 
-      // Scroll cursor into view, then focus — order matters to avoid browser focus-scroll.
-      requestAnimationFrame(() => {
-        scrollCursorIntoViewIfNeeded();
-        editor.focus();
-      });
+      // Undo any scroll the browser did when setting the selection
+      if (container && scrollBefore != null) {
+        container.scrollTop = scrollBefore;
+      }
+
+      // Focus without scrolling
+      editor.getRootElement()?.focus({ preventScroll: true });
     });
 
     return () => cancelAnimationFrame(frame);
@@ -345,6 +339,7 @@ export default function Editor({
         <HistoryPlugin />
         <ListPlugin />
         <BlockResetPlugin />
+        <StrikethroughPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <OnChangePlugin
           onChange={(editorState) => {

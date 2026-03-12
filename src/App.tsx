@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type LexicalEditor } from "lexical";
@@ -33,6 +33,8 @@ function App() {
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const idleHintRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const zoomIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialScrollRestoredRef = useRef(false);
   const [showZoomIndicator, setShowZoomIndicator] = useState(false);
 
   useEffect(() => {
@@ -58,6 +60,47 @@ function App() {
       console.error("Failed to load entries:", err);
     }
   };
+
+  // Restore scroll position before paint so there's no visible jump
+  useLayoutEffect(() => {
+    if (initialScrollRestoredRef.current || allEntries.length === 0) return;
+    initialScrollRestoredRef.current = true;
+
+    const container = document.querySelector(".scroll-container");
+    const stored = localStorage.getItem("clearmind-scroll");
+    if (container && stored) {
+      container.scrollTop = parseInt(stored, 10);
+    }
+  }, [allEntries]);
+
+  // Save scroll position on scroll (debounced)
+  // Depends on currentEntry so it runs after .scroll-container is in the DOM.
+  // Skips saves until initial scroll restore is done to avoid overwriting with wrong values.
+  useEffect(() => {
+    const container = document.querySelector(".scroll-container");
+    if (!container) return;
+
+    const saveScroll = () => {
+      localStorage.setItem("clearmind-scroll", String(container.scrollTop));
+    };
+
+    const handleScroll = () => {
+      if (!initialScrollRestoredRef.current) return;
+      if (scrollSaveRef.current) clearTimeout(scrollSaveRef.current);
+      scrollSaveRef.current = setTimeout(saveScroll, 300);
+    };
+
+    // Flush on close so the last position is always persisted
+    const handleBeforeUnload = () => saveScroll();
+
+    container.addEventListener("scroll", handleScroll);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      if (scrollSaveRef.current) clearTimeout(scrollSaveRef.current);
+    };
+  }, [currentEntry]);
 
   useEffect(() => {
     if (idleHintRef.current) clearTimeout(idleHintRef.current);
@@ -137,12 +180,14 @@ function App() {
     if (!entry.sealed) {
       setCurrentEntry(entry);
       contentRef.current = entry.content;
+      requestAnimationFrame(() => {
+        const el = document.querySelector(".editor-area");
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } else {
       setTimeout(() => {
         const el = document.getElementById(`entry-${entry.id}`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 50);
     }
   };
@@ -239,17 +284,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const scrollCursorAfterReflow = () => {
-      setTimeout(() => {
-        const sel = window.getSelection();
-        if (sel && sel.rangeCount > 0) {
-          const node = sel.getRangeAt(0).startContainer;
-          const el = node instanceof HTMLElement ? node : node.parentElement;
-          el?.scrollIntoView({ block: "center" });
-        }
-      }, 0);
-    };
-
     const flashZoomIndicator = () => {
       if (zoomIndicatorTimeoutRef.current) clearTimeout(zoomIndicatorTimeoutRef.current);
       setShowZoomIndicator(true);
@@ -271,7 +305,6 @@ function App() {
       if (e.key === "+" || e.key === "=") {
         e.preventDefault();
         updateFontScale((prev) => prev + FONT_SCALE_STEP);
-        //scrollCursorAfterReflow();
         flashZoomIndicator();
         return;
       }
@@ -280,7 +313,6 @@ function App() {
       if (e.key === "-") {
         e.preventDefault();
         updateFontScale((prev) => prev - FONT_SCALE_STEP);
-        //scrollCursorAfterReflow();
         flashZoomIndicator();
         return;
       }
@@ -289,7 +321,6 @@ function App() {
       if (e.key === "0") {
         e.preventDefault();
         updateFontScale(DEFAULT_FONT_SCALE);
-        //scrollCursorAfterReflow();
         flashZoomIndicator();
       }
     };
@@ -300,7 +331,6 @@ function App() {
       e.preventDefault();
       const delta = -e.deltaY * 0.01;
       updateFontScale((prev) => prev + delta);
-      scrollCursorAfterReflow();
       flashZoomIndicator();
     };
 
@@ -399,14 +429,12 @@ function App() {
               }}
             />
 
-            {showOnboarding && (
-              <div className="onboarding-hint">
-                <p>Start writing...</p>
-                <p><kbd>Shift</kbd> + <kbd>Enter</kbd> to finish this entry</p>
-                <p><kbd>⌘</kbd> + <kbd>K</kbd> for commands</p>
-                <p>  Right click for formatting</p>
-              </div>
-            )}
+            <div className={`onboarding-hint${showOnboarding ? " visible" : ""}`}>
+              <p>Start writing...</p>
+              <p><kbd>Shift</kbd> + <kbd>Enter</kbd> to finish this entry</p>
+              <p><kbd>⌘</kbd> + <kbd>K</kbd> for commands</p>
+              <p>Right click for formatting</p>
+            </div>
           </div>
         </div>
       </div>

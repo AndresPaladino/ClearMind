@@ -107,8 +107,8 @@ body {
   -ms-overflow-style: none;
   cursor: text;
   overflow-anchor: none;
-  scroll-padding-top: 80px;
-  scroll-padding-bottom: 80px;
+  scroll-padding-top: 12%;
+  scroll-padding-bottom: 30%;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -237,8 +237,8 @@ body {
   text-decoration: underline;
 }
 
-.editor-textarea strike, .editor-textarea s, .editor-textarea del,
-.entry-content-readonly strike, .entry-content-readonly s, .entry-content-readonly del {
+.editor-textarea strike, .editor-textarea s, .editor-textarea del, .editor-textarea .editor-strike,
+.entry-content-readonly strike, .entry-content-readonly s, .entry-content-readonly del, .entry-content-readonly .editor-strike {
   text-decoration: line-through;
   opacity: var(--editor-strike-opacity);
 }
@@ -309,10 +309,11 @@ body {
 
 /* Active editor area */
 .editor-area {
+  position: relative;
   display: flex;
   flex-direction: column;
   padding-top: 20vh;
-  padding-bottom: 50vh;
+  padding-bottom: 70vh;
 }
 
 .editor-textarea {
@@ -447,29 +448,39 @@ body {
 
 /* Onboarding */
 .onboarding-hint {
+  position: absolute;
+  top: 25.8vh;
+  left: 9em;
   margin: 0;
-  padding: 24px 0;
+  padding: 0;
+  pointer-events: none;
   background: transparent;
   border: none;
   border-radius: 0;
   box-shadow: none;
   color: var(--text-muted);
-  opacity: 0.55;
-  font-size: 13px;
-  line-height: 1.6;
-  transition: color 180ms ease;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 400ms ease, transform 400ms ease;
+  font-size: 0.85em;
+  line-height: 1.8;
+}
+
+.onboarding-hint.visible {
+  opacity: 0.45;
+  transform: translateY(0);
 }
 
 .onboarding-hint p {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   color: inherit;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .onboarding-hint p:first-child {
-  margin-bottom: 14px;
-  font-size: 14px;
+  margin-bottom: 12px;
+  font-size: 1em;
 }
 
 .onboarding-hint kbd {
@@ -575,46 +586,17 @@ body {
   white-space: nowrap;
 }
 
-.command-palette-item .entry-preview p,
-.command-palette-item .entry-preview h1,
-.command-palette-item .entry-preview h2,
-.command-palette-item .entry-preview h3,
-.command-palette-item .entry-preview ul,
-.command-palette-item .entry-preview ol,
-.command-palette-item .entry-preview blockquote {
-  display: inline;
-  margin: 0;
-  padding: 0;
-  font-size: 12px;
-  font-weight: inherit;
+.command-palette-item.confirm-delete {
+  background: rgba(220, 50, 50, 0.08);
 }
 
-.command-palette-item .entry-preview h1,
-.command-palette-item .entry-preview h2,
-.command-palette-item .entry-preview h3 {
-  font-weight: 600;
+.dark-theme .command-palette-item.confirm-delete {
+  background: rgba(220, 50, 50, 0.15);
 }
 
-.command-palette-item .delete-btn {
-  flex-shrink: 0;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 6px;
-  background: none;
+.command-palette-item .confirm-delete-label {
   color: var(--text-muted);
-  font-size: 14px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
-}
-
-.command-palette-item:hover .delete-btn {
-  opacity: 1;
-}
-
-.command-palette-item .delete-btn:hover {
-  background: rgba(220, 50, 50, 0.1);
-  color: #c33;
+  font-size: 12px;
 }
 
 .command-palette-empty {
@@ -622,6 +604,50 @@ body {
   color: var(--text-muted);
   font-size: var(--ui-font-size-sm);
   text-align: center;
+}
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  z-index: 1001;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-main);
+  font-size: var(--ui-font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.dark-theme .context-menu-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.context-menu-item--danger {
+  color: #c33;
+}
+
+.context-menu-item--danger:hover {
+  background: rgba(220, 50, 50, 0.1);
 }
 
 /* Cursor hiding */
