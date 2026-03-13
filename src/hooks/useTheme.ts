@@ -8,6 +8,11 @@ export function useTheme() {
     if (stored === "light" || stored === "dark") return stored;
     return "system";
   });
+  const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() => {
+    const stored = localStorage.getItem("clearmind-theme");
+    if (stored === "light" || stored === "dark") return stored;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
 
   useEffect(() => {
     if (theme === "system") {
@@ -24,6 +29,7 @@ export function useTheme() {
 
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const update = () => {
+      setResolvedTheme(mq.matches ? "dark" : "light");
       document.documentElement.classList.toggle("dark-theme", mq.matches);
       document.documentElement.classList.toggle("light-theme", !mq.matches);
     };
@@ -34,6 +40,11 @@ export function useTheme() {
     return () => mq.removeEventListener("change", update);
   }, [theme]);
 
+  useEffect(() => {
+    if (theme === "system") return;
+    setResolvedTheme(theme);
+  }, [theme]);
+
   const handleThemeToggle = () => {
     setTheme((prev) => {
       const next = prev === "dark" ? "light" : "dark";
@@ -42,5 +53,5 @@ export function useTheme() {
     });
   };
 
-  return { theme, handleThemeToggle };
+  return { theme, resolvedTheme, handleThemeToggle };
 }

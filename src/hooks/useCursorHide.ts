@@ -1,9 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export function useCursorHide() {
   const [isTyping, setIsTyping] = useState(false);
+  const isTypingRef = useRef(false);
 
   useEffect(() => {
+    isTypingRef.current = isTyping;
+
     if (isTyping) {
       document.body.classList.add("hide-cursor");
     } else {
@@ -13,12 +16,14 @@ export function useCursorHide() {
 
   useEffect(() => {
     const handleMouseMove = () => {
-      if (isTyping) setIsTyping(false);
+      if (isTypingRef.current) {
+        setIsTyping(false);
+      }
     };
 
     window.addEventListener("mousemove", handleMouseMove);
     return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, [isTyping]);
+  }, []);
 
   return { isTyping, setIsTyping };
 }

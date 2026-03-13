@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -152,11 +152,8 @@ function CursorRestorePlugin({ entryId }: { entryId: string }) {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      // Save scroll position before cursor restore — editor.update() sets the
-      // native selection which makes the browser auto-scroll to the cursor.
-      const container = document.querySelector(".scroll-container");
-      const scrollBefore = container?.scrollTop;
-
+      // discrete:true makes the update synchronous — cursor is in the DOM and
+      // the browser auto-scroll has already fired before this line returns.
       editor.update(() => {
         const root = $getRoot();
         const stored = localStorage.getItem(`clearmind-cursor-${entryId}`);
@@ -198,15 +195,27 @@ function CursorRestorePlugin({ entryId }: { entryId: string }) {
           if (lastChild) lastChild.selectEnd();
           else root.selectEnd();
         }
-      });
+      }, { discrete: true });
 
-      // Undo any scroll the browser did when setting the selection
-      if (container && scrollBefore != null) {
-        container.scrollTop = scrollBefore;
-      }
-
-      // Focus without scrolling
+      // Focus without triggering another browser scroll.
       editor.getRootElement()?.focus({ preventScroll: true });
+
+      // Correct scroll in the same frame before the browser paints —
+      // discrete:true ensures the selection is already in the DOM so
+      // getBoundingClientRect() returns the real cursor position.
+      const container = document.querySelector(".scroll-container") as HTMLElement | null;
+      if (container) {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const cursorRect = sel.getRangeAt(0).getBoundingClientRect();
+          if (cursorRect.height > 0) {
+            const containerRect = container.getBoundingClientRect();
+            const cursorTopRelative = cursorRect.top - containerRect.top;
+            const targetFromTop = container.clientHeight * 0.30;
+            container.scrollTop += cursorTopRelative - targetFromTop;
+          }
+        }
+      }
     });
 
     return () => cancelAnimationFrame(frame);
@@ -248,10 +257,15 @@ export default function Editor({
   const cursorSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadedRef = useRef(false);
   const lexicalRef = useRef<LexicalEditor | null>(null);
+  const [isEntryEmpty, setIsEntryEmpty] = useState(() => entry.content.trim().length === 0);
 
   useEffect(() => {
     isLoadedRef.current = false;
   }, [entry.id]);
+
+  useEffect(() => {
+    setIsEntryEmpty(entry.content.trim().length === 0);
+  }, [entry.id, entry.content]);
 
   const handleLoadDone = useCallback(() => {
     isLoadedRef.current = true;
@@ -264,21 +278,34 @@ export default function Editor({
 
   const handleContentChange = useCallback(
     (markdown: string) => {
-    onContentChange(markdown);
-    onTypingStart();
+      setIsEntryEmpty(markdown.trim().length === 0);
+      onContentChange(markdown);
+      onTypingStart();
 
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    typingTimeoutRef.current = setTimeout(() => {
-      onTypingStop();
-    }, 1500);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      typingTimeoutRef.current = setTimeout(() => {
+        onTypingStop();
+      }, 1500);
     },
     [onContentChange, onTypingStart, onTypingStop]
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLElement>) => {
+      // Tab inserts indentation in the editor instead of moving focus away.
+      if (e.key === "Tab" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        lexicalRef.current?.update(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            selection.insertText("\t");
+          }
+        });
+        return;
+      }
+
       // Shift+Enter → seal entry
       if (e.key === "Enter" && e.shiftKey) {
         e.preventDefault();
@@ -333,9 +360,21 @@ export default function Editor({
               spellCheck={false}
             />
           }
-          placeholder={<div className="editor-placeholder" />}
+          placeholder={<div className="editor-placeholder" aria-hidden="true" />}
           ErrorBoundary={() => null}
         />
+        <div
+          className={`editor-inline-hint${isEntryEmpty ? " visible" : ""}`}
+          aria-hidden="true"
+        >
+          <p className="editor-inline-hint-main">Start writing...</p>
+          <p className="editor-inline-hint-line">
+            <kbd>Shift</kbd> + <kbd>Enter</kbd> to finish this entry
+          </p>
+          <p className="editor-inline-hint-line">
+            <kbd>⌘</kbd> + <kbd>K</kbd> for commands
+          </p>
+        </div>
         <HistoryPlugin />
         <ListPlugin />
         <BlockResetPlugin />

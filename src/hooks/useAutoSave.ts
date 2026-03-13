@@ -1,43 +1,94 @@
 import { useRef, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Entry } from "../types";
+import { logError } from "../utils/logError";
 
-export function useAutoSave(currentEntry: Entry | null) {
+type SavePayload = {
+  entryId: string;
+  content: string;
+};
+
+export function useAutoSave() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>("");
+  const pendingSaveRef = useRef<SavePayload | null>(null);
+
+  const persist = useCallback(async ({ entryId, content }: SavePayload) => {
+    await invoke("save_entry", { id: entryId, content });
+  }, []);
 
   const scheduleSave = useCallback(
     (entryId: string, content: string) => {
+      pendingSaveRef.current = { entryId, content };
+
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(async () => {
+        const payload = pendingSaveRef.current;
+        if (!payload) return;
+
+        pendingSaveRef.current = null;
+        saveTimeoutRef.current = null;
+
         try {
-          await invoke("save_entry", { id: entryId, content });
+          await persist(payload);
         } catch (err) {
-          console.error("Failed to save entry:", err);
+          logError("AutoSave", "save_entry", err, { entryId: payload.entryId });
         }
       }, 1000);
     },
-    []
+    [persist]
   );
 
-  const flushSave = useCallback(() => {
+  const flushSave = useCallback(async (payload?: SavePayload) => {
+    const nextPayload = payload ?? pendingSaveRef.current;
+
+    if (!nextPayload) return;
+
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
     }
 
-    if (currentEntry && contentRef.current) {
-      invoke("save_entry", {
-        id: currentEntry.id,
-        content: contentRef.current,
-      }).catch((err) => console.error("Failed to flush save:", err));
+    pendingSaveRef.current = null;
+
+    try {
+      await persist(nextPayload);
+    } catch (err) {
+      logError("AutoSave", "flush_save", err, { entryId: nextPayload.entryId });
     }
-  }, [currentEntry]);
+  }, [persist]);
+
+  const cancelSave = useCallback(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    pendingSaveRef.current = null;
+  }, []);
 
   useEffect(() => {
-    const handleBeforeUnload = () => flushSave();
+    const handleBeforeUnload = () => {
+      const payload = pendingSaveRef.current;
+      if (!payload) return;
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+
+      pendingSaveRef.current = null;
+
+      invoke("save_entry", {
+        id: payload.entryId,
+        content: payload.content,
+      }).catch((err) =>
+        logError("AutoSave", "flush_before_unload", err, { entryId: payload.entryId })
+      );
+    };
+
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") flushSave();
+      if (document.visibilityState === "hidden") {
+        void flushSave();
+      }
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -49,5 +100,5 @@ export function useAutoSave(currentEntry: Entry | null) {
     };
   }, [flushSave]);
 
-  return { saveTimeoutRef, contentRef, scheduleSave, flushSave };
+  return { saveTimeoutRef, contentRef, scheduleSave, flushSave, cancelSave };
 }
