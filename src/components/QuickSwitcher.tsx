@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Entry } from "../types";
 import { extractTags } from "../utils/extractTags";
+import { getTagColorToken, type ColorTheme } from "../utils/tagColors";
 
 interface QuickSwitcherProps {
   entries: Entry[];
+  theme: ColorTheme;
   currentEntryId: string;
   onSelect: (entry: Entry) => void;
   onDelete: (entry: Entry) => Promise<void>;
@@ -25,6 +27,7 @@ function stripMarkdown(text: string): string {
 
 export default function QuickSwitcher({
   entries,
+  theme,
   currentEntryId,
   onSelect,
   onDelete,
@@ -238,6 +241,16 @@ export default function QuickSwitcher({
                               className={`entry-tag${
                                 isTagMode && tag.startsWith(q) ? " entry-tag-match" : ""
                               }`}
+                              style={(() => {
+                                const token = getTagColorToken(tag, theme);
+                                return {
+                                  color: token.text,
+                                  backgroundColor:
+                                    isTagMode && tag.startsWith(q)
+                                      ? token.matchBg
+                                      : token.bg,
+                                };
+                              })()}
                             >
                               {tag}
                             </span>

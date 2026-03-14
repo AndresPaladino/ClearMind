@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { type LexicalEditor } from "lexical";
 import ReactMarkdown from "react-markdown";
@@ -13,6 +13,7 @@ import { useCursorHide } from "./hooks/useCursorHide";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { logError } from "./utils/logError";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { colorizeReadonlyTags } from "./utils/colorizeReadonlyTags";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.8;
@@ -21,6 +22,8 @@ const ZOOM_STEP = 0.1;
 function App() {
   const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
   const [allEntries, setAllEntries] = useState<Entry[]>([]);
+  const [isLoadingEntry, setIsLoadingEntry] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [isDeleteChordPressed, setIsDeleteChordPressed] = useState(false);
@@ -53,12 +56,16 @@ function App() {
 
   const loadCurrentEntry = async () => {
     try {
+      setLoadError(null);
       const entry = await invoke<Entry>("get_current_entry");
       setCurrentEntry(entry);
       contentRef.current = entry.content;
       loadAllEntries();
     } catch (err) {
       logError("App", "load_current_entry", err);
+      setLoadError("Could not load your current entry. Try again.");
+    } finally {
+      setIsLoadingEntry(false);
     }
   };
 
@@ -334,11 +341,58 @@ function App() {
     };
   }, [applyZoom]);
 
-  if (!currentEntry) return null;
-
   const sealedEntries = allEntries.filter(
-    (e) => e.sealed && e.id !== currentEntry.id
+    (e) => e.sealed && e.id !== currentEntry?.id
   );
+  const markdownComponents = useMemo(
+    () => ({
+      p: ({ children, ...props }: any) => (
+        <p {...props}>{colorizeReadonlyTags(children, resolvedTheme, "p")}</p>
+      ),
+      li: ({ children, ...props }: any) => (
+        <li {...props}>{colorizeReadonlyTags(children, resolvedTheme, "li")}</li>
+      ),
+      blockquote: ({ children, ...props }: any) => (
+        <blockquote {...props}>{colorizeReadonlyTags(children, resolvedTheme, "blockquote")}</blockquote>
+      ),
+      h1: ({ children, ...props }: any) => (
+        <h1 {...props}>{colorizeReadonlyTags(children, resolvedTheme, "h1")}</h1>
+      ),
+      h2: ({ children, ...props }: any) => (
+        <h2 {...props}>{colorizeReadonlyTags(children, resolvedTheme, "h2")}</h2>
+      ),
+      h3: ({ children, ...props }: any) => (
+        <h3 {...props}>{colorizeReadonlyTags(children, resolvedTheme, "h3")}</h3>
+      ),
+    }),
+    [resolvedTheme]
+  );
+
+  if (isLoadingEntry) {
+    return (
+      <div className="app-loading-state" role="status" aria-live="polite">
+        Loading your writing session...
+      </div>
+    );
+  }
+
+  if (!currentEntry) {
+    return (
+      <div className="app-loading-state" role="alert" aria-live="assertive">
+        <p>{loadError ?? "Could not open the current session."}</p>
+        <button
+          type="button"
+          className="app-retry-button"
+          onClick={() => {
+            setIsLoadingEntry(true);
+            void loadCurrentEntry();
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
@@ -390,13 +444,14 @@ function App() {
                   </div>
 
                   <div className="entry-content-readonly">
-                    <ReactMarkdown>{entry.content}</ReactMarkdown>
+                    <ReactMarkdown components={markdownComponents}>{entry.content}</ReactMarkdown>
                   </div>
                 </div>
             ))}
 
             <Editor
               entry={currentEntry}
+              theme={resolvedTheme}
               onContentChange={handleContentChange}
               onSeal={handleSeal}
               onTypingStart={() => setIsTyping(true)}
@@ -423,6 +478,7 @@ function App() {
       {showQuickSwitcher && (
         <QuickSwitcher
           entries={allEntries}
+          theme={resolvedTheme}
           currentEntryId={currentEntry.id}
           onSelect={handleQuickSwitcherSelect}
           onDelete={handleQuickSwitcherDelete}

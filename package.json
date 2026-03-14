@@ -10,6 +10,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@lexical/hashtag": "^0.41.0",
     "@lexical/markdown": "^0.41.0",
     "@lexical/react": "^0.41.0",
     "@tauri-apps/api": "^2",

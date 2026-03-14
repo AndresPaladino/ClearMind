@@ -4,10 +4,12 @@ import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
+import { HashtagPlugin } from "@lexical/react/LexicalHashtagPlugin";
 
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
+import { HashtagNode, $isHashtagNode } from "@lexical/hashtag";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
 import { CodeNode } from "@lexical/code";
@@ -26,19 +28,88 @@ import {
   KEY_BACKSPACE_COMMAND,
   FORMAT_TEXT_COMMAND,
   COMMAND_PRIORITY_LOW,
+  $getNodeByKey,
   type LexicalEditor,
 } from "lexical";
 import { $isHeadingNode, $isQuoteNode } from "@lexical/rich-text";
 import { $isListNode, $isListItemNode } from "@lexical/list";
 import { Entry } from "../types";
+import { getTagColorToken, type ColorTheme } from "../utils/tagColors";
+import { logError } from "../utils/logError";
 
 interface EditorProps {
   entry: Entry;
+  theme: ColorTheme;
   onContentChange: (content: string) => void;
   onSeal: () => void;
   onTypingStart: () => void;
   onTypingStop: () => void;
   onEditorReady?: (editor: LexicalEditor) => void;
+}
+
+function TagColorPlugin({ theme }: { theme: ColorTheme }) {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const applyTagStyle = (element: HTMLElement, text: string) => {
+      try {
+        const token = getTagColorToken(text, theme);
+        element.style.color = token.text;
+        element.style.backgroundColor = token.bg;
+        element.style.borderRadius = "0.25em";
+        element.style.padding = "0 0.18em";
+        element.style.boxDecorationBreak = "clone";
+      } catch (err) {
+        logError("Editor", "apply_tag_style", err, { text });
+      }
+    };
+
+    const paintNodeKey = (key: string) => {
+      try {
+        editor.getEditorState().read(() => {
+          const node = $getNodeByKey(key);
+          if (!$isHashtagNode(node)) return;
+          const element = editor.getElementByKey(key);
+          if (!(element instanceof HTMLElement)) return;
+          applyTagStyle(element, node.getTextContent());
+        });
+      } catch (err) {
+        logError("Editor", "paint_single_hashtag", err, { key });
+      }
+    };
+
+    const paintAll = () => {
+      try {
+        editor.getEditorState().read(() => {
+          for (const node of $getRoot().getAllTextNodes()) {
+            if (!$isHashtagNode(node)) continue;
+            const element = editor.getElementByKey(node.getKey());
+            if (!(element instanceof HTMLElement)) continue;
+            applyTagStyle(element, node.getTextContent());
+          }
+        });
+      } catch (err) {
+        logError("Editor", "paint_all_hashtags", err);
+      }
+    };
+
+    const unregister = editor.registerMutationListener(HashtagNode, (mutations) => {
+      try {
+        for (const [key, mutation] of mutations) {
+          if (mutation === "created" || mutation === "updated") {
+            paintNodeKey(key);
+          }
+        }
+      } catch (err) {
+        logError("Editor", "observe_hashtag_mutations", err);
+      }
+    });
+
+    paintAll();
+    return unregister;
+  }, [editor, theme]);
+
+  return null;
 }
 
 function EditorReadyPlugin({ onReady }: { onReady?: (editor: LexicalEditor) => void }) {
@@ -247,6 +318,7 @@ function EditorSyncPlugin({
 
 export default function Editor({
   entry,
+  theme,
   onContentChange,
   onSeal,
   onTypingStart,
@@ -335,11 +407,20 @@ export default function Editor({
       },
       quote: "editor-quote",
       code: "editor-code",
+      hashtag: "editor-hashtag",
     },
     onError(error: Error) {
-      throw error;
+      logError("Editor", "lexical_runtime", error);
     },
-    nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, LinkNode],
+    nodes: [
+      HeadingNode,
+      QuoteNode,
+      ListNode,
+      ListItemNode,
+      CodeNode,
+      LinkNode,
+      HashtagNode,
+    ],
   };
 
   return (
@@ -379,6 +460,8 @@ export default function Editor({
         <ListPlugin />
         <BlockResetPlugin />
         <StrikethroughPlugin />
+        <HashtagPlugin />
+        <TagColorPlugin theme={theme} />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <OnChangePlugin
           onChange={(editorState) => {
