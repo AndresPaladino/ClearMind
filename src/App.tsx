@@ -166,6 +166,15 @@ function App() {
     }
   }, [currentEntry, contentRef, flushSave]);
 
+  const flushCurrentEntrySave = useCallback(async () => {
+    if (!currentEntry) return;
+
+    await flushSave({
+      entryId: currentEntry.id,
+      content: contentRef.current,
+    });
+  }, [currentEntry, contentRef, flushSave]);
+
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
@@ -178,8 +187,10 @@ function App() {
     return () => window.removeEventListener("contextmenu", handleContextMenu);
   }, []);
 
-  const handleQuickSwitcherSelect = (entry: Entry) => {
+  const handleQuickSwitcherSelect = async (entry: Entry) => {
     setShowQuickSwitcher(false);
+
+    await flushCurrentEntrySave();
 
     if (!entry.sealed) {
       setCurrentEntry(entry);
@@ -326,7 +337,16 @@ function App() {
 
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setShowQuickSwitcher((prev) => !prev);
+
+        if (showQuickSwitcher) {
+          setShowQuickSwitcher(false);
+          return;
+        }
+
+        void (async () => {
+          await flushCurrentEntrySave();
+          setShowQuickSwitcher(true);
+        })();
         return;
       }
 
@@ -353,7 +373,7 @@ function App() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [applyZoom]);
+  }, [applyZoom, flushCurrentEntrySave, showQuickSwitcher]);
 
   const sealedEntries = allEntries.filter(
     (e) => e.sealed && e.id !== currentEntry?.id
@@ -587,7 +607,9 @@ function App() {
           entries={allEntries}
           theme={resolvedTheme}
           currentEntryId={currentEntry.id}
-          onSelect={handleQuickSwitcherSelect}
+          onSelect={(entry) => {
+            void handleQuickSwitcherSelect(entry);
+          }}
           onDelete={handleQuickSwitcherDelete}
           onClose={() => setShowQuickSwitcher(false)}
         />

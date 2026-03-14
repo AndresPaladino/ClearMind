@@ -11,13 +11,45 @@ export function useAutoSave() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>("");
   const pendingSaveRef = useRef<SavePayload | null>(null);
+  const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const persist = useCallback(async ({ entryId, content }: SavePayload) => {
     await invoke("save_entry", { id: entryId, content });
   }, []);
 
+  const enqueuePersist = useCallback(
+    async (payload: SavePayload, operation: string) => {
+      const next = persistQueueRef.current
+        .catch(() => {
+          // Keep the save queue alive even if a previous write failed.
+        })
+        .then(async () => {
+          try {
+            await persist(payload);
+          } catch (err) {
+            logError("AutoSave", operation, err, { entryId: payload.entryId });
+          }
+        });
+
+      persistQueueRef.current = next;
+      await next;
+    },
+    [persist]
+  );
+
   const scheduleSave = useCallback(
     (entryId: string, content: string) => {
+      const pending = pendingSaveRef.current;
+      if (pending && pending.entryId !== entryId) {
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
+
+        pendingSaveRef.current = null;
+        void enqueuePersist(pending, "flush_save_on_entry_change");
+      }
+
       pendingSaveRef.current = { entryId, content };
 
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -28,34 +60,41 @@ export function useAutoSave() {
         pendingSaveRef.current = null;
         saveTimeoutRef.current = null;
 
-        try {
-          await persist(payload);
-        } catch (err) {
-          logError("AutoSave", "save_entry", err, { entryId: payload.entryId });
-        }
+        await enqueuePersist(payload, "save_entry");
       }, 1000);
     },
-    [persist]
+    [enqueuePersist]
   );
 
-  const flushSave = useCallback(async (payload?: SavePayload) => {
-    const nextPayload = payload ?? pendingSaveRef.current;
+  const flushSave = useCallback(
+    async (payload?: SavePayload) => {
+      if (payload) {
+        const pending = pendingSaveRef.current;
+        if (pending && pending.entryId === payload.entryId) {
+          if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = null;
+          }
+          pendingSaveRef.current = null;
+        }
 
-    if (!nextPayload) return;
+        await enqueuePersist(payload, "flush_save");
+        return;
+      }
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
+      const pending = pendingSaveRef.current;
+      if (!pending) return;
 
-    pendingSaveRef.current = null;
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
 
-    try {
-      await persist(nextPayload);
-    } catch (err) {
-      logError("AutoSave", "flush_save", err, { entryId: nextPayload.entryId });
-    }
-  }, [persist]);
+      pendingSaveRef.current = null;
+      await enqueuePersist(pending, "flush_save");
+    },
+    [enqueuePersist]
+  );
 
   const cancelSave = useCallback(() => {
     if (saveTimeoutRef.current) {
@@ -77,12 +116,7 @@ export function useAutoSave() {
 
       pendingSaveRef.current = null;
 
-      invoke("save_entry", {
-        id: payload.entryId,
-        content: payload.content,
-      }).catch((err) =>
-        logError("AutoSave", "flush_before_unload", err, { entryId: payload.entryId })
-      );
+      void enqueuePersist(payload, "flush_before_unload");
     };
 
     const handleVisibilityChange = () => {
@@ -98,7 +132,7 @@ export function useAutoSave() {
       window.removeEventListener("beforeunload", handleBeforeUnload);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [flushSave]);
+  }, [flushSave, enqueuePersist]);
 
   return { saveTimeoutRef, contentRef, scheduleSave, flushSave, cancelSave };
 }

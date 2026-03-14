@@ -141,7 +141,11 @@ fn entries_for_date(date_str: &str) -> AppResult<Vec<PathBuf>> {
             stem.splitn(2, '_').next().map(|d| d == date_str).unwrap_or(false)
         })
         .collect();
-    entries.sort();
+    entries.sort_by(|a, b| {
+        entry_number_from_path(a)
+            .cmp(&entry_number_from_path(b))
+            .then_with(|| a.cmp(b))
+    });
     Ok(entries)
 }
 
@@ -186,6 +190,17 @@ fn entry_number_from_path(path: &PathBuf) -> u32 {
         .and_then(|s| s.rsplit('_').next())
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0)
+}
+
+fn stem_date_and_number(stem: &str) -> (String, u32) {
+    let mut parts = stem.splitn(2, '_');
+    let date = parts.next().unwrap_or("").to_string();
+    let number = parts
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    (date, number)
 }
 
 fn is_sealed(path: &PathBuf) -> bool {
@@ -237,7 +252,12 @@ fn get_current_entry() -> AppResult<Entry> {
     }
 
     // All sealed or no entries → create new
-    let next_number = (entries.len() as u32) + 1;
+    let next_number = entries
+        .iter()
+        .map(entry_number_from_path)
+        .max()
+        .unwrap_or(0)
+        + 1;
 
     let filename = format!("{}_{}.md", date_str, next_number);
     let path = entries_dir()?.join(&filename);
@@ -283,7 +303,17 @@ fn get_all_entries() -> AppResult<Vec<Entry>> {
                 .unwrap_or(false)
         })
         .collect();
-    paths.sort();
+    paths.sort_by(|a, b| {
+        let a_stem = a.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let b_stem = b.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let (a_date, a_number) = stem_date_and_number(a_stem);
+        let (b_date, b_number) = stem_date_and_number(b_stem);
+
+        a_date
+            .cmp(&b_date)
+            .then_with(|| a_number.cmp(&b_number))
+            .then_with(|| a.cmp(b))
+    });
 
     let result = paths
         .iter()
@@ -315,18 +345,53 @@ fn renumber_entries_for_date(date_str: &str) -> AppResult<()> {
     let entries = entries_for_date(date_str)?;
     let dir = entries_dir()?;
 
+    let mut staged_renames: Vec<(PathBuf, PathBuf)> = Vec::new();
+
     for (i, old_path) in entries.iter().enumerate() {
         let new_number = (i as u32) + 1;
         let new_filename = format!("{}_{}.md", date_str, new_number);
         let new_path = dir.join(&new_filename);
         if *old_path != new_path {
-            fs::rename(old_path, &new_path).map_err(|e| {
+            let Some(old_name) = old_path.file_name().and_then(|n| n.to_str()) else {
+                return Err(AppError::InvalidEntryPath {
+                    id: old_path.display().to_string(),
+                });
+            };
+
+            let temp_filename = format!(
+                "{}.clearmind_renaming_{}_{}",
+                old_name,
+                std::process::id(),
+                i
+            );
+            let temp_path = dir.join(temp_filename);
+
+            fs::rename(old_path, &temp_path).map_err(|e| {
                 io_error(
-                    format!("renumber_entry:{}->{}", old_path.display(), new_path.display()),
+                    format!(
+                        "renumber_stage_entry:{}->{}",
+                        old_path.display(),
+                        temp_path.display()
+                    ),
                     e,
                 )
             })?;
+
+            staged_renames.push((temp_path, new_path));
         }
+    }
+
+    for (temp_path, new_path) in staged_renames {
+        fs::rename(&temp_path, &new_path).map_err(|e| {
+            io_error(
+                format!(
+                    "renumber_finalize_entry:{}->{}",
+                    temp_path.display(),
+                    new_path.display()
+                ),
+                e,
+            )
+        })?;
     }
 
     Ok(())
