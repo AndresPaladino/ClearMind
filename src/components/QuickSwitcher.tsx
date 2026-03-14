@@ -275,7 +275,6 @@ export default function QuickSwitcher({
                               style={(() => {
                                 const token = getTagColorToken(tag, theme);
                                 return {
-                                  color: token.text,
                                   backgroundColor:
                                     isTagMode && tag.startsWith(q)
                                       ? token.matchBg

@@ -19,17 +19,7 @@
     {
       "blur-material" : null,
       "layers" : [
-        {
-          "image-name" : "text-cursor-svgrepo-com (1).svg",
-          "name" : "text-cursor-svgrepo-com (1)",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              -248.1640625,
-              -16.666666666666742
-            ]
-          }
-        }
+
       ],
       "lighting" : "individual",
       "shadow" : {

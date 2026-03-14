@@ -50,7 +50,7 @@ export function colorizeReadonlyTags(
         <span
           key={`${keyPrefix}-${childIndex}-${partIndex}`}
           className="entry-inline-tag"
-          style={{ color: token.text, backgroundColor: token.bg }}
+          style={{ backgroundColor: token.bg }}
         >
           {tag}
         </span>
