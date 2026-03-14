@@ -9,7 +9,7 @@ ClearMind strips away everything that isn't writing. It opens to a blank page, s
 - Distraction-free editor with markdown support
 - Automatic saving
 - Light and dark themes
-- Adjustable font size
+- Adjustable Zoom levels
 - Quick switcher to jump between entries
 - Per-entry organization with a discreet navigation indicator
 
