@@ -23,6 +23,8 @@ function App() {
   const [allEntries, setAllEntries] = useState<Entry[]>([]);
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+  const [isDeleteChordPressed, setIsDeleteChordPressed] = useState(false);
+  const [pendingDeleteEntryId, setPendingDeleteEntryId] = useState<string | null>(null);
 
   const { resolvedTheme, handleThemeToggle } = useTheme();
   const { isTyping, setIsTyping } = useCursorHide();
@@ -30,6 +32,7 @@ function App() {
 
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const scrollSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRestoredRef = useRef(false);
   const zoomRef = useRef(1);
 
@@ -187,6 +190,80 @@ function App() {
     }
   };
 
+  const clearDeleteArm = useCallback(() => {
+    if (deleteArmTimeoutRef.current) {
+      clearTimeout(deleteArmTimeoutRef.current);
+      deleteArmTimeoutRef.current = null;
+    }
+    setPendingDeleteEntryId(null);
+  }, []);
+
+  const armDeleteEntry = useCallback((entryId: string) => {
+    if (deleteArmTimeoutRef.current) {
+      clearTimeout(deleteArmTimeoutRef.current);
+    }
+
+    setPendingDeleteEntryId(entryId);
+    deleteArmTimeoutRef.current = setTimeout(() => {
+      setPendingDeleteEntryId(null);
+      deleteArmTimeoutRef.current = null;
+    }, 1600);
+  }, []);
+
+  const handleSealedEntryClick = (e: React.MouseEvent, entry: Entry) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (pendingDeleteEntryId === entry.id) {
+      clearDeleteArm();
+      void handleQuickSwitcherDelete(entry);
+      return;
+    }
+
+    armDeleteEntry(entry.id);
+  };
+
+  useEffect(() => {
+    const updateDeleteChordState = (e: KeyboardEvent) => {
+      setIsDeleteChordPressed(e.metaKey || e.ctrlKey);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      setIsDeleteChordPressed(e.metaKey || e.ctrlKey);
+    };
+
+    const handleWindowBlur = () => {
+      setIsDeleteChordPressed(false);
+    };
+
+    window.addEventListener("keydown", updateDeleteChordState, true);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      window.removeEventListener("keydown", updateDeleteChordState, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingDeleteEntryId) return;
+    if (allEntries.some((entry) => entry.id === pendingDeleteEntryId)) return;
+    clearDeleteArm();
+  }, [allEntries, pendingDeleteEntryId, clearDeleteArm]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteArmTimeoutRef.current) {
+        clearTimeout(deleteArmTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleSealedEntryDoubleClick = useCallback(
     async (entry: Entry) => {
       try {
@@ -250,23 +327,10 @@ function App() {
       }
     };
 
-    const handleWheel = (e: WheelEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      e.preventDefault();
-
-      const direction = e.deltaY < 0 ? 1 : -1;
-      void applyZoom(zoomRef.current + direction * ZOOM_STEP);
-    };
-
     document.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("wheel", handleWheel, {
-      capture: true,
-      passive: false,
-    });
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
-      document.removeEventListener("wheel", handleWheel, true);
     };
   }, [applyZoom]);
 
@@ -281,7 +345,8 @@ function App() {
       {createPortal(
         <div
           className={`theme-toggle-pill${resolvedTheme === "dark" ? " dark" : ""}`}
-          title={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+          data-tooltip={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+          data-tooltip-placement="left"
           onClick={handleThemeToggle}
         >
           <div className="theme-pill-track">
@@ -298,12 +363,30 @@ function App() {
                 <div
                   key={entry.id}
                   id={`entry-${entry.id}`}
-                  className="entry-sealed"
-                  title="Double-click to edit"
+                  className={`entry-sealed${isDeleteChordPressed ? " delete-mode" : ""}${
+                    pendingDeleteEntryId === entry.id ? " delete-armed" : ""
+                  }`}
+                  onClick={(e) => handleSealedEntryClick(e, entry)}
                   onDoubleClick={() => void handleSealedEntryDoubleClick(entry)}
                 >
                   <div className="entry-date-inline">
-                    <span>{entry.date} #{entry.number}</span>
+                    <span className="entry-gesture-anchor">
+                      {entry.date} #{entry.number}
+                      <span className="entry-gesture-tooltip" role="tooltip">
+                        Double-click to edit. Hold ⌘ and click to arm delete
+                      </span>
+                    </span>
+                    <span
+                      className={`entry-delete-hint${
+                        isDeleteChordPressed || pendingDeleteEntryId === entry.id
+                          ? " visible"
+                          : ""
+                      }`}
+                    >
+                      {pendingDeleteEntryId === entry.id
+                        ? "Click again to delete"
+                        : "⌘ Click to delete"}
+                    </span>
                   </div>
 
                   <div className="entry-content-readonly">
@@ -340,6 +423,7 @@ function App() {
       {showQuickSwitcher && (
         <QuickSwitcher
           entries={allEntries}
+          currentEntryId={currentEntry.id}
           onSelect={handleQuickSwitcherSelect}
           onDelete={handleQuickSwitcherDelete}
           onClose={() => setShowQuickSwitcher(false)}

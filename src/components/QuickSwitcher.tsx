@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Entry } from "../types";
+import { extractTags } from "../utils/extractTags";
 
 interface QuickSwitcherProps {
   entries: Entry[];
+  currentEntryId: string;
   onSelect: (entry: Entry) => void;
-  onDelete: (entry: Entry) => void;
+  onDelete: (entry: Entry) => Promise<void>;
   onClose: () => void;
 }
 
@@ -23,6 +25,7 @@ function stripMarkdown(text: string): string {
 
 export default function QuickSwitcher({
   entries,
+  currentEntryId,
   onSelect,
   onDelete,
   onClose,
@@ -30,14 +33,28 @@ export default function QuickSwitcher({
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
+  const [blockedDeleteEntryId, setBlockedDeleteEntryId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const blockedDeleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listboxId = "entry-switcher-listbox";
   const hintId = "entry-switcher-hint";
+
+  const focusInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, []);
 
   const filtered = entries.filter((entry) => {
     const label = `${entry.date} #${entry.number}`;
     const q = query.toLowerCase();
+
+    if (q.startsWith("#") && q.length > 1) {
+      // Tag mode: only match against extracted tags (prefix match)
+      return extractTags(entry.content).some((tag) => tag.startsWith(q));
+    }
+
     const plainContent = stripMarkdown(entry.content).toLowerCase();
     return label.toLowerCase().includes(q) || plainContent.includes(q);
   });
@@ -45,13 +62,25 @@ export default function QuickSwitcher({
   const sorted = [...filtered].reverse();
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    focusInput();
+  }, [focusInput]);
 
   useEffect(() => {
     setSelectedIndex(0);
     setPendingDeleteIndex(null);
+    setBlockedDeleteEntryId(null);
   }, [query]);
+
+  useEffect(() => {
+    setSelectedIndex((prev) => {
+      if (sorted.length === 0) return 0;
+      return Math.min(prev, sorted.length - 1);
+    });
+  }, [sorted.length]);
+
+  useEffect(() => {
+    focusInput();
+  }, [sorted.length, focusInput]);
 
   useEffect(() => {
     const list = listRef.current;
@@ -61,19 +90,47 @@ export default function QuickSwitcher({
     item.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
+  useEffect(() => {
+    return () => {
+      if (blockedDeleteTimeoutRef.current) {
+        clearTimeout(blockedDeleteTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const triggerBlockedDelete = useCallback((entryId: string) => {
+    if (blockedDeleteTimeoutRef.current) {
+      clearTimeout(blockedDeleteTimeoutRef.current);
+    }
+
+    setPendingDeleteIndex(null);
+    setBlockedDeleteEntryId(entryId);
+    blockedDeleteTimeoutRef.current = setTimeout(() => {
+      setBlockedDeleteEntryId(null);
+      blockedDeleteTimeoutRef.current = null;
+    }, 360);
+  }, []);
+
   const deleteEntry = useCallback(
-    (index: number) => {
+    async (index: number) => {
       const entry = sorted[index];
       if (!entry) return;
-      void onDelete(entry);
+      if (entry.id === currentEntryId) {
+        triggerBlockedDelete(entry.id);
+        focusInput();
+        return;
+      }
+
+      const nextIndexAfterDelete =
+        index >= sorted.length - 1 ? Math.max(0, index - 1) : index;
+
+      await onDelete(entry);
       setPendingDeleteIndex(null);
-      setSelectedIndex((prev) => {
-        const newLength = sorted.length - 1;
-        if (newLength <= 0) return 0;
-        return Math.min(prev, newLength - 1);
-      });
+
+      setSelectedIndex(nextIndexAfterDelete);
+      focusInput();
     },
-    [sorted, onDelete]
+    [sorted, onDelete, focusInput, currentEntryId, triggerBlockedDelete]
   );
 
   const handleKeyDown = useCallback(
@@ -101,7 +158,7 @@ export default function QuickSwitcher({
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (pendingDeleteIndex !== null) {
-          deleteEntry(pendingDeleteIndex);
+          void deleteEntry(pendingDeleteIndex);
         } else if (sorted[selectedIndex]) {
           onSelect(sorted[selectedIndex]);
         }
@@ -132,7 +189,7 @@ export default function QuickSwitcher({
           ref={inputRef}
           className="quick-switcher-input"
           type="text"
-          placeholder="Go to entry..."
+          placeholder="Go to entry or #tag..."
           value={query}
           aria-controls={listboxId}
           aria-activedescendant={`entry-switcher-option-${selectedIndex}`}
@@ -148,7 +205,7 @@ export default function QuickSwitcher({
                 id={`entry-switcher-option-${i}`}
                 role="option"
                 aria-selected={i === selectedIndex}
-                className={`quick-switcher-item ${i === selectedIndex ? "selected" : ""} ${i === pendingDeleteIndex ? "confirm-delete" : ""}`}
+                className={`quick-switcher-item ${i === selectedIndex ? "selected" : ""} ${i === pendingDeleteIndex ? "confirm-delete" : ""} ${entry.id === currentEntryId ? "current-entry" : ""} ${entry.id === blockedDeleteEntryId ? "blocked-delete" : ""}`}
                 onClick={() => onSelect(entry)}
               >
                 {i === pendingDeleteIndex ? (
@@ -157,12 +214,37 @@ export default function QuickSwitcher({
                   </span>
                 ) : (
                   <>
-                    <span className="entry-label">
-                      {entry.date} #{entry.number}
-                    </span>
-                    <span className="entry-preview">
-                      {stripMarkdown(entry.content).substring(0, 120)}
-                    </span>
+                    <div className="quick-switcher-item-row">
+                      <span className="entry-label">
+                        {entry.date} #{entry.number}
+                        {entry.id === currentEntryId && (
+                          <span className="entry-current-badge">Currently opened</span>
+                        )}
+                      </span>
+                      <span className="entry-preview">
+                        {stripMarkdown(entry.content).substring(0, 120)}
+                      </span>
+                    </div>
+                    {(() => {
+                      const tags = extractTags(entry.content);
+                      if (tags.length === 0) return null;
+                      const q = query.toLowerCase();
+                      const isTagMode = q.startsWith("#") && q.length > 1;
+                      return (
+                        <div className="quick-switcher-item-tags">
+                          {tags.slice(0, 5).map((tag) => (
+                            <span
+                              key={tag}
+                              className={`entry-tag${
+                                isTagMode && tag.startsWith(q) ? " entry-tag-match" : ""
+                              }`}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
               </div>
