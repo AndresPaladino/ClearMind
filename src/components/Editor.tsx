@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { Component, useEffect, useRef, useCallback, useState, type ReactNode, type ReactElement, type ErrorInfo } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -36,6 +36,38 @@ import { $isListNode, $isListItemNode } from "@lexical/list";
 import { Entry } from "../types";
 import { getTagColorToken, type ColorTheme } from "../utils/tagColors";
 import { logError } from "../utils/logError";
+
+class EditorErrorBoundary extends Component<
+  { children: ReactElement; onError: (error: Error) => void },
+  { hasError: boolean }
+> {
+  constructor(props: { children: ReactElement; onError: (error: Error) => void }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): { hasError: boolean } {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    this.props.onError(error);
+    logError("Editor", "render_error", error, {
+      componentStack: info.componentStack ?? undefined,
+    });
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="editor-error-fallback" role="alert">
+          The editor encountered an error. Please reload.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface EditorProps {
   entry: Entry;
@@ -442,7 +474,7 @@ export default function Editor({
             />
           }
           placeholder={<div className="editor-placeholder" aria-hidden="true" />}
-          ErrorBoundary={() => null}
+          ErrorBoundary={EditorErrorBoundary}
         />
         <div
           className={`editor-inline-hint${isEntryEmpty ? " visible" : ""}`}

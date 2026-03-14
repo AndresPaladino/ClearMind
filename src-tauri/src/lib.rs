@@ -1,11 +1,13 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Once;
 
 type AppResult<T> = Result<T, AppError>;
 static LEGACY_MIGRATION_ONCE: Once = Once::new();
+static ORPHAN_CLEANUP_ONCE: Once = Once::new();
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -21,6 +23,58 @@ fn io_error(operation: impl Into<String>, error: std::io::Error) -> AppError {
     AppError::Io {
         operation: operation.into(),
         details: error.to_string(),
+    }
+}
+
+/// Write content atomically: write to a temp file, fsync, then rename over the destination.
+/// Protects against partial writes on abrupt termination or power loss.
+fn write_atomic(dest: &PathBuf, content: &str) -> AppResult<()> {
+    let dir = dest.parent().ok_or_else(|| AppError::Io {
+        operation: "write_atomic_parent".to_string(),
+        details: "path has no parent directory".to_string(),
+    })?;
+
+    let file_name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("entry");
+
+    let tmp_name = format!("{}.write_tmp_{}", file_name, std::process::id());
+    let tmp_path = dir.join(&tmp_name);
+
+    {
+        let mut file =
+            fs::File::create(&tmp_path).map_err(|e| io_error("write_atomic_create", e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| io_error("write_atomic_write", e))?;
+        file.flush().map_err(|e| io_error("write_atomic_flush", e))?;
+        file.sync_all()
+            .map_err(|e| io_error("write_atomic_sync", e))?;
+    }
+
+    fs::rename(&tmp_path, dest).map_err(|e| io_error("write_atomic_rename", e))?;
+
+    Ok(())
+}
+
+/// Remove leftover temp files from interrupted write or rename operations.
+/// Called once per process on startup via ORPHAN_CLEANUP_ONCE.
+fn cleanup_orphan_tmp_files(dir: &PathBuf) {
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in read_dir.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.contains(".write_tmp_") || name.contains(".clearmind_renaming_") {
+            let _ = fs::remove_file(&path);
+        }
     }
 }
 
@@ -111,6 +165,11 @@ fn entries_dir() -> AppResult<PathBuf> {
         if let Err(error) = migrate_legacy_entries(&migration_root, &migration_dir) {
             eprintln!("legacy entry migration failed: {:?}", error);
         }
+    });
+
+    let cleanup_dir = dir.clone();
+    ORPHAN_CLEANUP_ONCE.call_once(|| {
+        cleanup_orphan_tmp_files(&cleanup_dir);
     });
 
     Ok(dir)
@@ -261,7 +320,7 @@ fn get_current_entry() -> AppResult<Entry> {
 
     let filename = format!("{}_{}.md", date_str, next_number);
     let path = entries_dir()?.join(&filename);
-    fs::write(&path, "").map_err(|e| io_error("create_entry_file", e))?;
+    write_atomic(&path, "")?;
 
     Ok(Entry {
         id: format!("{}_{}", date_str, next_number),
@@ -275,7 +334,7 @@ fn get_current_entry() -> AppResult<Entry> {
 #[tauri::command]
 fn save_entry(id: String, content: String) -> AppResult<bool> {
     let path = safe_entry_path(&id)?;
-    fs::write(&path, &content).map_err(|e| io_error("save_entry_file", e))?;
+    write_atomic(&path, &content)?;
     Ok(true)
 }
 
@@ -283,7 +342,7 @@ fn save_entry(id: String, content: String) -> AppResult<bool> {
 fn seal_entry(id: String, content: String) -> AppResult<Entry> {
     let path = safe_entry_path(&id)?;
     let sealed_content = format!("{}\n\n<!-- sealed -->", content.trim());
-    fs::write(&path, &sealed_content).map_err(|e| io_error("seal_entry_file", e))?;
+    write_atomic(&path, &sealed_content)?;
 
     // Create next entry
     get_current_entry()
@@ -402,7 +461,7 @@ fn unseal_entry(id: String) -> AppResult<bool> {
     let path = safe_entry_path(&id)?;
     let content = fs::read_to_string(&path).map_err(|e| io_error("read_entry_file", e))?;
     let clean = clean_entry_content(&content);
-    fs::write(&path, &clean).map_err(|e| io_error("unseal_entry_file", e))?;
+    write_atomic(&path, &clean)?;
     Ok(true)
 }
 

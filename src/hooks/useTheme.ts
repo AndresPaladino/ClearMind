@@ -1,25 +1,7 @@
 import { useState, useEffect } from "react";
-import lightSound from "../assets/sounds/light.mp3";
-import darkSound from "../assets/sounds/dark.mp3";
-import fontSound from "../assets/sounds/font.mp3";
 
 type Theme = "light" | "dark" | "system";
 type ResolvedTheme = "light" | "dark";
-type SoundName = "light" | "dark" | "font";
-
-const SOUND_VOLUME = 0.14;
-
-const SOUND_FILES: Record<SoundName, string> = {
-  light: lightSound,
-  dark: darkSound,
-  font: fontSound,
-};
-
-const playSound = (name: SoundName) => {
-  const audio = new Audio(SOUND_FILES[name]);
-  audio.volume = SOUND_VOLUME;
-  audio.play().catch(() => {});
-};
 
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
@@ -32,10 +14,6 @@ export function useTheme() {
     if (stored === "light" || stored === "dark") return stored;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-  const [isMuted, setIsMuted] = useState<boolean>(() => {
-    return localStorage.getItem("clearmind-sounds-muted") === "true";
-  });
-
   useEffect(() => {
     if (theme === "system") {
       document.documentElement.classList.remove("dark-theme");
@@ -71,23 +49,6 @@ export function useTheme() {
     setTheme((prev) => {
       const next: ResolvedTheme = prev === "dark" ? "light" : "dark";
       localStorage.setItem("clearmind-theme", next);
-      if (!isMuted) {
-        playSound(next);
-      }
-      return next;
-    });
-  };
-
-  // Para el cambio de font desde App
-  const playFontToggleSound = () => {
-    if (isMuted) return;
-    playSound("font");
-  };
-
-  const toggleMute = () => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      localStorage.setItem("clearmind-sounds-muted", String(next));
       return next;
     });
   };
@@ -95,9 +56,6 @@ export function useTheme() {
   return {
     theme,
     resolvedTheme,
-    isMuted,
     handleThemeToggle,
-    playFontToggleSound,
-    toggleMute,
   };
 }

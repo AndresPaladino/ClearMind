@@ -136,8 +136,8 @@ export default function QuickSwitcher({
     [sorted, onDelete, focusInput, currentEntryId, triggerBlockedDelete]
   );
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+  const handleSwitcherKeyDown = useCallback(
+    (e: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "preventDefault">) => {
       if (e.key === "Tab") {
         e.preventDefault();
         inputRef.current?.focus();
@@ -176,6 +176,37 @@ export default function QuickSwitcher({
     },
     [sorted, selectedIndex, pendingDeleteIndex, onSelect, deleteEntry, onClose]
   );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      handleSwitcherKeyDown(e);
+    },
+    [handleSwitcherKeyDown]
+  );
+
+  useEffect(() => {
+    const handleDocumentKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key !== "Tab" &&
+        e.key !== "Escape" &&
+        e.key !== "ArrowDown" &&
+        e.key !== "ArrowUp" &&
+        e.key !== "Enter" &&
+        !(e.key === "Backspace" && (e.metaKey || e.ctrlKey))
+      ) {
+        return;
+      }
+
+      e.stopPropagation();
+      handleSwitcherKeyDown(e);
+    };
+
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+
+    return () => {
+      document.removeEventListener("keydown", handleDocumentKeyDown, true);
+    };
+  }, [handleSwitcherKeyDown]);
 
   return (
     <div className="quick-switcher-overlay" onClick={onClose}>
