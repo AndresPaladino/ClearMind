@@ -1,5 +1,7 @@
 /* ClearMind – minimal journal */
 
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap");
+
 *,
 *::before,
 *::after {
@@ -8,13 +10,16 @@
 
 :root {
   --bg: #faf9f7;
+  --bg-rgb: 250, 249, 247;
   --text: #1a1a1a;
   --text-muted: #b0aea8;
 
   --column-width: 680px;
   --page-side-padding: 24px;
 
-  --font-main: "Inter", Helvetica, Arial, sans-serif;
+  --font-sans: "Inter", Helvetica, Arial, sans-serif;
+  --font-serif: "Source Serif 4", "Times New Roman", Times, serif;
+  --font-main: var(--font-sans);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
   --glass-bg: rgba(255, 255, 255, 0.65);
@@ -35,8 +40,17 @@
   --editor-strike-opacity: 0.6;
 }
 
+:root.font-serif {
+  --font-main: var(--font-serif);
+}
+
+:root.font-sans {
+  --font-main: var(--font-sans);
+}
+
 .dark-theme {
   --bg: #18191a;
+  --bg-rgb: 24, 25, 26;
   --text: #f3f3f3;
   --text-muted: #888a8c;
 
@@ -54,6 +68,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not(.light-theme):not(.dark-theme) {
     --bg: #18191a;
+    --bg-rgb: 24, 25, 26;
     --text: #f3f3f3;
     --text-muted: #888a8c;
 
@@ -96,6 +111,131 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+.content-root {
+  transition: opacity 280ms ease, filter 280ms ease, transform 280ms ease;
+  will-change: opacity, filter, transform;
+}
+
+.app-container.font-switching .content-root {
+  opacity: 0.04;
+  filter: blur(1.2px);
+  transform: translateX(2px);
+}
+
+.font-switch-screen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  pointer-events: none;
+  overflow: hidden;
+  background: rgba(var(--bg-rgb), 1);
+  opacity: 0;
+  will-change: opacity;
+  animation: font-switch-whiteout 1400ms ease-in-out forwards;
+}
+
+.font-switch-screen-overlay::before,
+.font-switch-screen-overlay::after {
+  content: "";
+  position: absolute;
+  inset: -6% -20%;
+  pointer-events: none;
+}
+
+.font-switch-screen-overlay::before {
+  background: linear-gradient(
+    102deg,
+    transparent 10%,
+    rgba(var(--bg-rgb), 0.92) 44%,
+    rgba(var(--bg-rgb), 0.52) 52%,
+    transparent 66%
+  );
+  opacity: 0;
+  transform: translateX(-30%) skewX(-8deg);
+  filter: blur(8px);
+  animation: font-switch-swing 1100ms cubic-bezier(0.2, 0.65, 0.2, 1) forwards;
+}
+
+.font-switch-screen-overlay::after {
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    rgba(var(--bg-rgb), 0.95) 0%,
+    rgba(var(--bg-rgb), 0.42) 50%,
+    transparent 76%
+  );
+  opacity: 0;
+  filter: blur(14px);
+  animation: font-switch-evaporate 1200ms ease-out forwards;
+}
+
+@keyframes font-switch-whiteout {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.96;
+  }
+  90% {
+    opacity: 0.96;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes font-switch-swing {
+  0% {
+    opacity: 0;
+    transform: translateX(-32%) skewX(-8deg);
+  }
+  18% {
+    opacity: 0.72;
+  }
+  64% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(34%) skewX(-8deg);
+  }
+}
+
+@keyframes font-switch-evaporate {
+  0% {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  26% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.016);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .content-root {
+    transition: opacity 140ms ease;
+  }
+
+  .app-container.font-switching .content-root {
+    opacity: 0.1;
+    filter: none;
+    transform: none;
+  }
+
+  .font-switch-screen-overlay {
+    animation: font-switch-whiteout 1100ms ease-in-out forwards;
+  }
+
+  .font-switch-screen-overlay::before,
+  .font-switch-screen-overlay::after {
+    filter: none;
+    animation: none;
+  }
 }
 
 .app-loading-state {
@@ -678,6 +818,70 @@ body {
 .theme-toggle-pill.dark .theme-pill-ball {
   background: #fff;
   transform: translateY(24px);
+}
+
+/* Font toggle button */
+.font-toggle-button {
+  position: fixed;
+  top: 72px;
+  right: 24px;
+  z-index: 1200;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: var(--glass-bg);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.35;
+  transition:
+    opacity 180ms ease,
+    color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.font-toggle-button:hover {
+  opacity: 1;
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.font-toggle-button:active {
+  transform: translateY(0) scale(0.94);
+}
+
+.font-toggle-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+.font-toggle-letter {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.font-toggle-button:active .font-toggle-letter {
+  transform: scale(0.92);
+}
+
+.font-toggle-button::after {
+  transition: opacity 170ms ease, transform 170ms ease;
+}
+
+.font-toggle-button.sans .font-toggle-letter {
+  font-family: var(--font-sans);
+}
+
+.font-toggle-button.serif .font-toggle-letter {
+  font-family: var(--font-serif);
 }
 
 /* Entry indicator */

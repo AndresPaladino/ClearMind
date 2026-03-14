@@ -18,6 +18,7 @@ import { colorizeReadonlyTags } from "./utils/colorizeReadonlyTags";
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.8;
 const ZOOM_STEP = 0.1;
+type FontMode = "sans" | "serif";
 
 function App() {
   const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
@@ -28,6 +29,11 @@ function App() {
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [isDeleteChordPressed, setIsDeleteChordPressed] = useState(false);
   const [pendingDeleteEntryId, setPendingDeleteEntryId] = useState<string | null>(null);
+  const [isFontSwitching, setIsFontSwitching] = useState(false);
+  const [fontMode, setFontMode] = useState<FontMode>(() => {
+    const stored = localStorage.getItem("clearmind-font-family");
+    return stored === "serif" ? "serif" : "sans";
+  });
 
   const { resolvedTheme, handleThemeToggle } = useTheme();
   const { isTyping, setIsTyping } = useCursorHide();
@@ -36,8 +42,16 @@ function App() {
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const scrollSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deleteArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fontSwitchApplyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fontSwitchEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRestoredRef = useRef(false);
   const zoomRef = useRef(1);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("font-serif", fontMode === "serif");
+    document.documentElement.classList.toggle("font-sans", fontMode === "sans");
+    localStorage.setItem("clearmind-font-family", fontMode);
+  }, [fontMode]);
 
   const applyZoom = useCallback(async (nextZoom: number) => {
     const boundedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
@@ -344,6 +358,47 @@ function App() {
   const sealedEntries = allEntries.filter(
     (e) => e.sealed && e.id !== currentEntry?.id
   );
+
+  const handleFontToggle = useCallback(() => {
+    if (isFontSwitching) return;
+
+    if (fontSwitchApplyTimeoutRef.current) {
+      clearTimeout(fontSwitchApplyTimeoutRef.current);
+      fontSwitchApplyTimeoutRef.current = null;
+    }
+
+    if (fontSwitchEndTimeoutRef.current) {
+      clearTimeout(fontSwitchEndTimeoutRef.current);
+      fontSwitchEndTimeoutRef.current = null;
+    }
+
+    const nextFontMode: FontMode = fontMode === "sans" ? "serif" : "sans";
+
+    setIsFontSwitching(true);
+    // Apply the actual font swap after the whiteout is already visible.
+    fontSwitchApplyTimeoutRef.current = setTimeout(() => {
+      setFontMode(nextFontMode);
+      fontSwitchApplyTimeoutRef.current = null;
+    }, 320);
+
+    fontSwitchEndTimeoutRef.current = setTimeout(() => {
+      setIsFontSwitching(false);
+      fontSwitchEndTimeoutRef.current = null;
+    }, 1450);
+  }, [fontMode, isFontSwitching]);
+
+  useEffect(() => {
+    return () => {
+      if (fontSwitchApplyTimeoutRef.current) {
+        clearTimeout(fontSwitchApplyTimeoutRef.current);
+      }
+
+      if (fontSwitchEndTimeoutRef.current) {
+        clearTimeout(fontSwitchEndTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const markdownComponents = useMemo(
     () => ({
       p: ({ children, ...props }: any) => (
@@ -395,18 +450,40 @@ function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className={`app-container${isFontSwitching ? " font-switching" : ""}`}>
+      {isFontSwitching && <div className="font-switch-screen-overlay" aria-hidden="true" />}
+
       {createPortal(
-        <div
-          className={`theme-toggle-pill${resolvedTheme === "dark" ? " dark" : ""}`}
-          data-tooltip={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-          data-tooltip-placement="left"
-          onClick={handleThemeToggle}
-        >
-          <div className="theme-pill-track">
-            <div className="theme-pill-ball" />
+        <>
+          <div
+            className={`theme-toggle-pill${resolvedTheme === "dark" ? " dark" : ""}`}
+            data-tooltip={resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+            data-tooltip-placement="left"
+            onClick={handleThemeToggle}
+          >
+            <div className="theme-pill-track">
+              <div className="theme-pill-ball" />
+            </div>
           </div>
-        </div>,
+
+          <button
+            type="button"
+            className={`font-toggle-button${fontMode === "serif" ? " serif" : " sans"}`}
+            onClick={handleFontToggle}
+            data-tooltip={fontMode === "sans" ? "Sans-serif" : "Serif"}
+            data-tooltip-placement="left"
+            aria-label={
+              fontMode === "sans"
+                ? "Switch to Source Serif 4"
+                : "Switch to Inter"
+            }
+          >
+            <span className="font-toggle-letter" aria-hidden="true">
+              a
+            </span>
+          </button>
+        </>
+      ,
         document.body
       )}
 
