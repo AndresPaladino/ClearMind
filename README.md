@@ -10,7 +10,7 @@ ClearMind strips away everything that isn't writing. It opens to a blank page, s
 - Automatic saving
 - Light and dark themes
 - Adjustable font size
-- Command palette for quick access to settings
+- Quick switcher to jump between entries
 - Per-entry organization with a discreet navigation indicator
 
 ## Getting Started

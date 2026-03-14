@@ -372,7 +372,7 @@ export default function Editor({
             <kbd>Shift</kbd> + <kbd>Enter</kbd> to finish this entry
           </p>
           <p className="editor-inline-hint-line">
-            <kbd>⌘</kbd> + <kbd>K</kbd> for commands
+            <kbd>⌘</kbd> + <kbd>K</kbd> to jump entries
           </p>
         </div>
         <HistoryPlugin />

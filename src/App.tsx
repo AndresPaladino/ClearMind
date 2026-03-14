@@ -4,7 +4,7 @@ import { type LexicalEditor } from "lexical";
 import ReactMarkdown from "react-markdown";
 import { Entry } from "./types";
 import Editor from "./components/Editor";
-import CommandPalette from "./components/CommandPalette";
+import QuickSwitcher from "./components/QuickSwitcher";
 import { showContextMenu } from "./components/ContextMenu";
 import EntryIndicator from "./components/EntryIndicator";
 import { createPortal } from "react-dom";
@@ -21,7 +21,7 @@ const ZOOM_STEP = 0.1;
 function App() {
   const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
   const [allEntries, setAllEntries] = useState<Entry[]>([]);
-  const [showPalette, setShowPalette] = useState(false);
+  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
 
   const { resolvedTheme, handleThemeToggle } = useTheme();
@@ -154,8 +154,8 @@ function App() {
     return () => window.removeEventListener("contextmenu", handleContextMenu);
   }, []);
 
-  const handlePaletteSelect = (entry: Entry) => {
-    setShowPalette(false);
+  const handleQuickSwitcherSelect = (entry: Entry) => {
+    setShowQuickSwitcher(false);
 
     if (!entry.sealed) {
       setCurrentEntry(entry);
@@ -175,7 +175,7 @@ function App() {
     }
   }, [pendingScrollId, allEntries]);
 
-  const handlePaletteDelete = async (entry: Entry) => {
+  const handleQuickSwitcherDelete = async (entry: Entry) => {
     try {
       if (currentEntry?.id === entry.id) {
         cancelSave();
@@ -228,7 +228,7 @@ function App() {
 
       if (e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setShowPalette((prev) => !prev);
+        setShowQuickSwitcher((prev) => !prev);
         return;
       }
 
@@ -337,12 +337,12 @@ function App() {
         document.body
       )}
 
-      {showPalette && (
-        <CommandPalette
+      {showQuickSwitcher && (
+        <QuickSwitcher
           entries={allEntries}
-          onSelect={handlePaletteSelect}
-          onDelete={handlePaletteDelete}
-          onClose={() => setShowPalette(false)}
+          onSelect={handleQuickSwitcherSelect}
+          onDelete={handleQuickSwitcherDelete}
+          onClose={() => setShowQuickSwitcher(false)}
         />
       )}
     </div>

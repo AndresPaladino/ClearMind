@@ -11,7 +11,8 @@ export default function EntryIndicator({
 }: EntryIndicatorProps) {
   return (
     <div className={`entry-indicator ${isTyping ? "dimmed" : ""}`}>
-      {isTyping ? `#${number}` : `${date} #${number}`}
+      <span className={`entry-indicator-date ${isTyping ? "hidden" : ""}`}>{date} </span>
+      #{number}
     </div>
   );
 }

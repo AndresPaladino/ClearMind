@@ -1,17 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Entry } from "../types";
 
-interface CommandPaletteProps {
+interface QuickSwitcherProps {
   entries: Entry[];
   onSelect: (entry: Entry) => void;
   onDelete: (entry: Entry) => void;
   onClose: () => void;
-}
-
-interface ContextMenu {
-  x: number;
-  y: number;
-  entryIndex: number;
 }
 
 function stripMarkdown(text: string): string {
@@ -27,26 +21,25 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
-export default function CommandPalette({
+export default function QuickSwitcher({
   entries,
   onSelect,
   onDelete,
   onClose,
-}: CommandPaletteProps) {
+}: QuickSwitcherProps) {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const listboxId = "entry-switcher-listbox";
+  const hintId = "entry-switcher-hint";
 
   const filtered = entries.filter((entry) => {
     const label = `${entry.date} #${entry.number}`;
     const q = query.toLowerCase();
-    return (
-      label.toLowerCase().includes(q) ||
-      entry.content.toLowerCase().includes(q)
-    );
+    const plainContent = stripMarkdown(entry.content).toLowerCase();
+    return label.toLowerCase().includes(q) || plainContent.includes(q);
   });
 
   const sorted = [...filtered].reverse();
@@ -68,28 +61,12 @@ export default function CommandPalette({
     item.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
-  // Close context menu on any click or scroll
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    window.addEventListener("click", close);
-    window.addEventListener("contextmenu", close);
-    listRef.current?.addEventListener("scroll", close);
-    return () => {
-      window.removeEventListener("click", close);
-      window.removeEventListener("contextmenu", close);
-      listRef.current?.removeEventListener("scroll", close);
-    };
-  }, [contextMenu]);
-
   const deleteEntry = useCallback(
     (index: number) => {
       const entry = sorted[index];
       if (!entry) return;
-      onDelete(entry);
+      void onDelete(entry);
       setPendingDeleteIndex(null);
-      setContextMenu(null);
-      // Reposition: stay at same index, clamp if it was the last item
       setSelectedIndex((prev) => {
         const newLength = sorted.length - 1;
         if (newLength <= 0) return 0;
@@ -101,9 +78,10 @@ export default function CommandPalette({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Close context menu on any key
-      if (contextMenu) {
-        setContextMenu(null);
+      if (e.key === "Tab") {
+        e.preventDefault();
+        inputRef.current?.focus();
+        return;
       }
 
       if (e.key === "Escape") {
@@ -136,43 +114,42 @@ export default function CommandPalette({
         setPendingDeleteIndex(selectedIndex);
       }
     },
-    [sorted, selectedIndex, pendingDeleteIndex, contextMenu, onSelect, deleteEntry, onClose]
-  );
-
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, index: number) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setContextMenu({ x: e.clientX, y: e.clientY, entryIndex: index });
-    },
-    []
+    [sorted, selectedIndex, pendingDeleteIndex, onSelect, deleteEntry, onClose]
   );
 
   return (
-    <div className="command-palette-overlay" onClick={onClose}>
+    <div className="quick-switcher-overlay" onClick={onClose}>
       <div
-        className="command-palette"
+        className="quick-switcher"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Jump to entry"
+        aria-describedby={hintId}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         <input
           ref={inputRef}
-          className="command-palette-input"
+          className="quick-switcher-input"
           type="text"
-          placeholder="Search entries..."
+          placeholder="Go to entry..."
           value={query}
+          aria-controls={listboxId}
+          aria-activedescendant={`entry-switcher-option-${selectedIndex}`}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="command-palette-list" ref={listRef}>
+        <div className="quick-switcher-list" ref={listRef} role="listbox" id={listboxId}>
           {sorted.length === 0 ? (
-            <div className="command-palette-empty">No results</div>
+            <div className="quick-switcher-empty">No results</div>
           ) : (
             sorted.map((entry, i) => (
               <div
                 key={entry.id}
-                className={`command-palette-item ${i === selectedIndex ? "selected" : ""} ${i === pendingDeleteIndex ? "confirm-delete" : ""}`}
+                id={`entry-switcher-option-${i}`}
+                role="option"
+                aria-selected={i === selectedIndex}
+                className={`quick-switcher-item ${i === selectedIndex ? "selected" : ""} ${i === pendingDeleteIndex ? "confirm-delete" : ""}`}
                 onClick={() => onSelect(entry)}
-                onContextMenu={(e) => handleContextMenu(e, i)}
               >
                 {i === pendingDeleteIndex ? (
                   <span className="confirm-delete-label">
@@ -192,22 +169,19 @@ export default function CommandPalette({
             ))
           )}
         </div>
-      </div>
-
-      {contextMenu && (
-        <div
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            className="context-menu-item context-menu-item--danger"
-            onClick={() => deleteEntry(contextMenu.entryIndex)}
-          >
-            Delete
-          </button>
+        <div className="quick-switcher-footer" id={hintId}>
+          <span>
+            <kbd>↵</kbd> Open
+          </span>
+          <span>
+            <kbd>Esc</kbd> Close
+          </span>
+          <span>
+            <kbd>⌘</kbd>
+            <kbd>⌫</kbd> Delete
+          </span>
         </div>
-      )}
+      </div>
     </div>
   );
 }
