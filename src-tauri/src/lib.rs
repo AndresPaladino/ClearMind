@@ -1,5 +1,6 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -288,6 +289,63 @@ struct Entry {
     sealed: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct EntrySummary {
+    id: String,
+    date: String,
+    number: u32,
+    sealed: bool,
+    tags: Vec<String>,
+}
+
+fn is_ascii_alpha(byte: u8) -> bool {
+    byte.is_ascii_alphabetic()
+}
+
+fn is_tag_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
+}
+
+fn extract_tags(content: &str) -> Vec<String> {
+    let bytes = content.as_bytes();
+    let mut tags: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] != b'#' {
+            i += 1;
+            continue;
+        }
+
+        if i > 0 && bytes[i - 1] == b'#' {
+            i += 1;
+            continue;
+        }
+
+        if i + 1 >= bytes.len() || !is_ascii_alpha(bytes[i + 1]) {
+            i += 1;
+            continue;
+        }
+
+        let mut j = i + 2;
+        while j < bytes.len() && is_tag_char(bytes[j]) {
+            j += 1;
+        }
+
+        let mut tag = String::from("#");
+        tag.push_str(&content[i + 1..j].to_ascii_lowercase());
+
+        if seen.insert(tag.clone()) {
+            tags.push(tag);
+        }
+
+        i = j;
+    }
+
+    tags
+}
+
 #[tauri::command]
 fn get_current_entry() -> AppResult<Entry> {
     let date_str = date_str_today();
@@ -399,6 +457,58 @@ fn get_all_entries() -> AppResult<Vec<Entry>> {
     Ok(result)
 }
 
+#[tauri::command]
+fn get_all_entry_summaries() -> AppResult<Vec<EntrySummary>> {
+    let dir = entries_dir()?;
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .map_err(|e| io_error("list_entry_files", e))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(is_valid_entry_filename)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    paths.sort_by(|a, b| {
+        let a_stem = a.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let b_stem = b.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let (a_date, a_number) = stem_date_and_number(a_stem);
+        let (b_date, b_number) = stem_date_and_number(b_stem);
+
+        a_date
+            .cmp(&b_date)
+            .then_with(|| a_number.cmp(&b_number))
+            .then_with(|| a.cmp(b))
+    });
+
+    let result = paths
+        .iter()
+        .map(|path| {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            let parts: Vec<&str> = stem.splitn(2, '_').collect();
+            let date_part = parts.first().unwrap_or(&"");
+            let number: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let display_date = date_part.replace('-', "/");
+            let sealed = is_sealed(path);
+            let content = fs::read_to_string(path).unwrap_or_default();
+            let tags = extract_tags(&content);
+
+            EntrySummary {
+                id: stem.to_string(),
+                date: display_date,
+                number,
+                sealed,
+                tags,
+            }
+        })
+        .collect();
+
+    Ok(result)
+}
+
 /// Renumber all .md files for a given date so they are sequential: _1, _2, _3...
 fn renumber_entries_for_date(date_str: &str) -> AppResult<()> {
     let entries = entries_for_date(date_str)?;
@@ -488,6 +598,7 @@ pub fn run() {
             save_entry,
             seal_entry,
             get_all_entries,
+            get_all_entry_summaries,
             delete_entry,
             unseal_entry,
         ])

@@ -1,17 +1,19 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import { type LexicalEditor } from "lexical";
-import ReactMarkdown from "react-markdown";
-import { Entry } from "./types";
+import { Entry, EntrySummary } from "./types";
 import Editor from "./components/Editor";
-import QuickSwitcher from "./components/QuickSwitcher";
+const QuickSwitcher = lazy(() => import("./components/QuickSwitcher"));
 import DateNavigator from "./components/DateNavigator";
+import SealedEntryCard from "./components/SealedEntryCard";
 import { showContextMenu } from "./components/ContextMenu";
 import EntryIndicator from "./components/EntryIndicator";
 import { createPortal } from "react-dom";
 import { useTheme } from "./hooks/useTheme";
 import { useCursorHide } from "./hooks/useCursorHide";
 import { useAutoSave } from "./hooks/useAutoSave";
+import { useDeleteChord } from "./hooks/useDeleteChord";
+import { useEntryStore } from "./hooks/useEntryStore";
+import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { logError } from "./utils/logError";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { colorizeReadonlyTags } from "./utils/colorizeReadonlyTags";
@@ -31,14 +33,8 @@ interface RailDay {
 }
 
 function App() {
-  const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
-  const [allEntries, setAllEntries] = useState<Entry[]>([]);
-  const [isLoadingEntry, setIsLoadingEntry] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
-  const [isDeleteChordPressed, setIsDeleteChordPressed] = useState(false);
-  const [pendingDeleteEntryId, setPendingDeleteEntryId] = useState<string | null>(null);
   const [activeDayKey, setActiveDayKey] = useState<string | null>(null);
   const [isFontSwitching, setIsFontSwitching] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>(() => {
@@ -48,11 +44,26 @@ function App() {
 
   const { resolvedTheme, handleThemeToggle } = useTheme();
   const { isTyping, setIsTyping } = useCursorHide();
-  const { contentRef, scheduleSave, flushSave, cancelSave } = useAutoSave();
+  const { contentRef, scheduleSave, flushSave, cancelSave, saveStatus } = useAutoSave();
+  const {
+    currentEntry,
+    allEntries,
+    allEntrySummaries,
+    isLoadingEntry,
+    loadError,
+    reloadCurrentSession,
+    flushCurrentEntrySave,
+    selectOpenEntry,
+    sealCurrentEntry,
+    unsealStoredEntry,
+    deleteStoredEntry,
+  } = useEntryStore({ contentRef, flushSave, cancelSave });
+  const existingEntryIds = useMemo(() => allEntries.map((entry) => entry.id), [allEntries]);
+  const { isDeleteChordPressed, pendingDeleteEntryId, clearDeleteArm, armDeleteEntry } =
+    useDeleteChord({ existingEntryIds });
 
   const lexicalEditorRef = useRef<LexicalEditor | null>(null);
   const scrollSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deleteArmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fontSwitchApplyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fontSwitchEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRestoredRef = useRef(false);
@@ -75,34 +86,6 @@ function App() {
       logError("App", "set_zoom", err, { zoom: boundedZoom });
     }
   }, []);
-
-  useEffect(() => {
-    loadCurrentEntry();
-  }, []);
-
-  const loadCurrentEntry = async () => {
-    try {
-      setLoadError(null);
-      const entry = await invoke<Entry>("get_current_entry");
-      setCurrentEntry(entry);
-      contentRef.current = entry.content;
-      loadAllEntries();
-    } catch (err) {
-      logError("App", "load_current_entry", err);
-      setLoadError("Could not load your current entry. Try again.");
-    } finally {
-      setIsLoadingEntry(false);
-    }
-  };
-
-  const loadAllEntries = async () => {
-    try {
-      const entries = await invoke<Entry[]>("get_all_entries");
-      setAllEntries(entries);
-    } catch (err) {
-      logError("App", "load_all_entries", err);
-    }
-  };
 
   // Restore scroll position before paint so there's no visible jump
   useLayoutEffect(() => {
@@ -156,36 +139,9 @@ function App() {
     [currentEntry, scheduleSave]
   );
 
-  const handleSeal = useCallback(async () => {
-    if (!currentEntry) return;
-
-    try {
-      await flushSave({
-        entryId: currentEntry.id,
-        content: contentRef.current,
-      });
-
-      const newEntry = await invoke<Entry>("seal_entry", {
-        id: currentEntry.id,
-        content: contentRef.current,
-      });
-
-      setCurrentEntry(newEntry);
-      contentRef.current = newEntry.content;
-      loadAllEntries();
-    } catch (err) {
-      logError("App", "seal_entry", err, { entryId: currentEntry.id });
-    }
-  }, [currentEntry, contentRef, flushSave]);
-
-  const flushCurrentEntrySave = useCallback(async () => {
-    if (!currentEntry) return;
-
-    await flushSave({
-      entryId: currentEntry.id,
-      content: contentRef.current,
-    });
-  }, [currentEntry, contentRef, flushSave]);
+  const handleSeal = useCallback(() => {
+    void sealCurrentEntry();
+  }, [sealCurrentEntry]);
 
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
@@ -205,8 +161,7 @@ function App() {
     await flushCurrentEntrySave();
 
     if (!entry.sealed) {
-      setCurrentEntry(entry);
-      contentRef.current = entry.content;
+      selectOpenEntry(entry);
     } else {
       setPendingScrollId(entry.id);
     }
@@ -224,43 +179,13 @@ function App() {
 
   const handleQuickSwitcherDelete = async (entry: Entry) => {
     try {
-      if (currentEntry?.id === entry.id) {
-        cancelSave();
-      }
-      await invoke("delete_entry", { id: entry.id });
-      await loadCurrentEntry();
+      await deleteStoredEntry(entry);
     } catch (err) {
       logError("App", "delete_entry", err, { entryId: entry.id });
     }
   };
 
-  const clearDeleteArm = useCallback(() => {
-    if (deleteArmTimeoutRef.current) {
-      clearTimeout(deleteArmTimeoutRef.current);
-      deleteArmTimeoutRef.current = null;
-    }
-    setPendingDeleteEntryId(null);
-  }, []);
-
-  const armDeleteEntry = useCallback((entryId: string) => {
-    if (deleteArmTimeoutRef.current) {
-      clearTimeout(deleteArmTimeoutRef.current);
-    }
-
-    setPendingDeleteEntryId(entryId);
-    deleteArmTimeoutRef.current = setTimeout(() => {
-      setPendingDeleteEntryId(null);
-      deleteArmTimeoutRef.current = null;
-    }, 1600);
-  }, []);
-
-  const handleSealedEntryClick = (e: React.MouseEvent, entry: Entry) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (!mod) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
+  const handleSealedEntryDeleteGesture = useCallback((entry: Entry) => {
     if (pendingDeleteEntryId === entry.id) {
       clearDeleteArm();
       void handleQuickSwitcherDelete(entry);
@@ -268,88 +193,14 @@ function App() {
     }
 
     armDeleteEntry(entry.id);
-  };
-
-  useEffect(() => {
-    const updateDeleteChordState = (e: KeyboardEvent) => {
-      setIsDeleteChordPressed(e.metaKey || e.ctrlKey);
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      setIsDeleteChordPressed(e.metaKey || e.ctrlKey);
-    };
-
-    const handleWindowBlur = () => {
-      setIsDeleteChordPressed(false);
-    };
-
-    window.addEventListener("keydown", updateDeleteChordState, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("blur", handleWindowBlur);
-
-    return () => {
-      window.removeEventListener("keydown", updateDeleteChordState, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("blur", handleWindowBlur);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!pendingDeleteEntryId) return;
-    if (allEntries.some((entry) => entry.id === pendingDeleteEntryId)) return;
-    clearDeleteArm();
-  }, [allEntries, pendingDeleteEntryId, clearDeleteArm]);
-
-  useEffect(() => {
-    return () => {
-      if (deleteArmTimeoutRef.current) {
-        clearTimeout(deleteArmTimeoutRef.current);
-      }
-    };
-  }, []);
+  }, [armDeleteEntry, clearDeleteArm, handleQuickSwitcherDelete, pendingDeleteEntryId]);
 
   const handleSealedEntryDoubleClick = useCallback(
     async (entry: Entry) => {
-      try {
-        if (currentEntry?.id) {
-          await flushSave({
-            entryId: currentEntry.id,
-            content: contentRef.current,
-          });
-        }
-
-        await invoke("unseal_entry", { id: entry.id });
-        const entries = await invoke<Entry[]>("get_all_entries");
-
-        setAllEntries(entries);
-        const reopened = entries.find((item) => item.id === entry.id);
-        if (reopened) {
-          setCurrentEntry(reopened);
-          contentRef.current = reopened.content;
-        }
-      } catch (err) {
-        logError("App", "unseal_entry", err, { entryId: entry.id });
-      }
+      await unsealStoredEntry(entry);
     },
-    [currentEntry, flushSave, contentRef]
+    [unsealStoredEntry]
   );
-
-  const handleSealedEntryKeyDown = (e: React.KeyboardEvent, entry: Entry) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    e.preventDefault();
-
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod) {
-      if (pendingDeleteEntryId === entry.id) {
-        clearDeleteArm();
-        void handleQuickSwitcherDelete(entry);
-        return;
-      }
-      armDeleteEntry(entry.id);
-    } else {
-      void handleSealedEntryDoubleClick(entry);
-    }
-  };
 
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -359,83 +210,78 @@ function App() {
     if (editor) editor.focus();
   }, []);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
+  const openQuickSwitcher = useCallback(async () => {
+    await flushCurrentEntrySave();
+    setShowQuickSwitcher(true);
+  }, [flushCurrentEntrySave]);
 
-      if (e.key.toLowerCase() === "k") {
-        e.preventDefault();
+  const closeQuickSwitcher = useCallback(() => {
+    setShowQuickSwitcher(false);
+  }, []);
 
-        if (showQuickSwitcher) {
-          setShowQuickSwitcher(false);
-          return;
-        }
+  const zoomIn = useCallback(() => {
+    void applyZoom(zoomRef.current + ZOOM_STEP);
+  }, [applyZoom]);
 
-        void (async () => {
-          await flushCurrentEntrySave();
-          setShowQuickSwitcher(true);
-        })();
-        return;
-      }
+  const zoomOut = useCallback(() => {
+    void applyZoom(zoomRef.current - ZOOM_STEP);
+  }, [applyZoom]);
 
-      if (e.key === "+" || e.key === "=") {
-        e.preventDefault();
-        void applyZoom(zoomRef.current + ZOOM_STEP);
-        return;
-      }
+  const zoomReset = useCallback(() => {
+    void applyZoom(1);
+  }, [applyZoom]);
 
-      if (e.key === "-") {
-        e.preventDefault();
-        void applyZoom(zoomRef.current - ZOOM_STEP);
-        return;
-      }
-
-      if (e.key === "0") {
-        e.preventDefault();
-        void applyZoom(1);
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown, true);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [applyZoom, flushCurrentEntrySave, showQuickSwitcher]);
+  useGlobalShortcuts({
+    isQuickSwitcherOpen: showQuickSwitcher,
+    openQuickSwitcher,
+    closeQuickSwitcher,
+    zoomIn,
+    zoomOut,
+    zoomReset,
+  });
 
   const sealedEntries = allEntries.filter(
     (e) => e.sealed && e.id !== currentEntry?.id
   );
 
-  const renderedEntries = useMemo(() => {
-    if (!currentEntry) return sealedEntries;
-    return [...sealedEntries, currentEntry];
-  }, [sealedEntries, currentEntry]);
+  const summariesForNavigator = useMemo<EntrySummary[]>(() => {
+    if (!currentEntry || currentEntry.sealed) {
+      return allEntrySummaries;
+    }
+
+    const currentTags = extractTags(contentRef.current);
+    return allEntrySummaries.map((summary) => {
+      if (summary.id !== currentEntry.id) return summary;
+      return {
+        ...summary,
+        tags: currentTags,
+      };
+    });
+  }, [allEntrySummaries, contentRef, currentEntry]);
 
   const railDays = useMemo<RailDay[]>(() => {
     const dayMap = new Map<string, RailDay>();
 
-    for (const entry of renderedEntries) {
-      const dayKey = entry.id.split("_")[0];
+    for (const summary of summariesForNavigator) {
+      const dayKey = summary.id.split("_")[0];
       const existing = dayMap.get(dayKey);
       if (!existing) {
         dayMap.set(dayKey, {
           key: dayKey,
-          label: entry.date,
-          firstEntryId: entry.id,
+          label: summary.date,
+          firstEntryId: summary.id,
           count: 1,
-          tags: extractTags(entry.content),
+          tags: summary.tags,
         });
       } else {
         existing.count += 1;
-        const mergedTags = new Set([...existing.tags, ...extractTags(entry.content)]);
+        const mergedTags = new Set([...existing.tags, ...summary.tags]);
         existing.tags = Array.from(mergedTags);
       }
     }
 
     return Array.from(dayMap.values());
-  }, [renderedEntries]);
+  }, [summariesForNavigator]);
 
   const firstRenderedEntryByDay = useMemo(() => {
     const map = new Map<string, string>();
@@ -596,8 +442,7 @@ function App() {
           type="button"
           className="app-retry-button"
           onClick={() => {
-            setIsLoadingEntry(true);
-            void loadCurrentEntry();
+            void reloadCurrentSession();
           }}
         >
           Retry
@@ -649,53 +494,18 @@ function App() {
         <div className="content-root">
           <div className="column">
             {sealedEntries.map((entry) => (
-              <div key={entry.id}>
-                {firstRenderedEntryByDay.get(entry.id.split("_")[0]) === entry.id && (
-                  <div
-                    id={`day-${entry.id.split("_")[0]}`}
-                    className="day-anchor"
-                    data-day-anchor="true"
-                    data-day-key={entry.id.split("_")[0]}
-                    aria-hidden="true"
-                  />
-                )}
-                <div
-                  id={`entry-${entry.id}`}
-                  className={`entry-sealed${isDeleteChordPressed ? " delete-mode" : ""}${
-                    pendingDeleteEntryId === entry.id ? " delete-armed" : ""
-                  }`}
-                  tabIndex={0}
-                  role="article"
-                  aria-label={`Entry ${entry.date} #${entry.number}`}
-                  onClick={(e) => handleSealedEntryClick(e, entry)}
-                  onDoubleClick={() => void handleSealedEntryDoubleClick(entry)}
-                  onKeyDown={(e) => handleSealedEntryKeyDown(e, entry)}
-                >
-                  <div className="entry-date-inline">
-                    <span className="entry-gesture-anchor">
-                      {entry.date} #{entry.number}
-                      <span className="entry-gesture-tooltip" role="tooltip">
-                        Double-click to edit. Hold ⌘ and click to arm delete
-                      </span>
-                    </span>
-                    <span
-                      className={`entry-delete-hint${
-                        isDeleteChordPressed || pendingDeleteEntryId === entry.id
-                          ? " visible"
-                          : ""
-                      }`}
-                    >
-                      {pendingDeleteEntryId === entry.id
-                        ? "Click again to delete"
-                        : "⌘ Click to delete"}
-                    </span>
-                  </div>
-
-                  <div className="entry-content-readonly">
-                    <ReactMarkdown components={markdownComponents}>{entry.content}</ReactMarkdown>
-                  </div>
-                </div>
-              </div>
+              <SealedEntryCard
+                key={entry.id}
+                entry={entry}
+                hasDayAnchor={firstRenderedEntryByDay.get(entry.id.split("_")[0]) === entry.id}
+                isDeleteChordPressed={isDeleteChordPressed}
+                isDeleteArmed={pendingDeleteEntryId === entry.id}
+                onRequestDelete={handleSealedEntryDeleteGesture}
+                onRequestUnseal={(entryToOpen) => {
+                  void handleSealedEntryDoubleClick(entryToOpen);
+                }}
+                markdownComponents={markdownComponents}
+              />
             ))}
 
             {firstRenderedEntryByDay.get(currentEntry.id.split("_")[0]) === currentEntry.id && (
@@ -738,22 +548,25 @@ function App() {
             date={currentEntry.date}
             number={currentEntry.number}
             isTyping={isTyping}
+            saveStatus={saveStatus}
           />
         </div>,
         document.body
       )}
 
       {showQuickSwitcher && (
-        <QuickSwitcher
-          entries={allEntries}
-          theme={resolvedTheme}
-          currentEntryId={currentEntry.id}
-          onSelect={(entry) => {
-            void handleQuickSwitcherSelect(entry);
-          }}
-          onDelete={handleQuickSwitcherDelete}
-          onClose={() => setShowQuickSwitcher(false)}
-        />
+        <Suspense fallback={null}>
+          <QuickSwitcher
+            entries={allEntries}
+            theme={resolvedTheme}
+            currentEntryId={currentEntry.id}
+            onSelect={(entry) => {
+              void handleQuickSwitcherSelect(entry);
+            }}
+            onDelete={handleQuickSwitcherDelete}
+            onClose={() => setShowQuickSwitcher(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

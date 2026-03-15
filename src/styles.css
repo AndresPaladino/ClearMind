@@ -1296,6 +1296,31 @@ body {
   opacity: 0;
 }
 
+.entry-save-status {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: lowercase;
+}
+
+.entry-save-status.pending {
+  color: color-mix(in srgb, var(--text) 70%, var(--text-muted));
+}
+
+.entry-save-status.saved {
+  color: color-mix(in srgb, #2f8f57 72%, var(--text));
+  border-color: color-mix(in srgb, #2f8f57 40%, transparent);
+}
+
+.entry-save-status.error {
+  color: color-mix(in srgb, #b63a3a 78%, var(--text));
+  border-color: color-mix(in srgb, #b63a3a 42%, transparent);
+}
+
 /* Quick switcher */
 .quick-switcher-overlay {
   position: fixed;

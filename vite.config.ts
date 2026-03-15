@@ -29,4 +29,51 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+
+          // Lexical editor — large, only used by Editor.tsx
+          if (id.includes("/@lexical/") || id.includes("/lexical/")) {
+            return "vendor-lexical";
+          }
+
+          // Markdown rendering — only used by SealedEntryCard.tsx
+          if (
+            id.includes("/react-markdown") ||
+            id.includes("/remark-") ||
+            id.includes("/rehype-") ||
+            id.includes("/unified") ||
+            id.includes("/vfile") ||
+            id.includes("/mdast-") ||
+            id.includes("/micromark") ||
+            id.includes("/hast-") ||
+            id.includes("/unist-") ||
+            id.includes("/property-information") ||
+            id.includes("/decode-named-character-reference") ||
+            id.includes("/character-entities")
+          ) {
+            return "vendor-markdown";
+          }
+
+          // Tauri JS API
+          if (id.includes("/@tauri-apps/")) {
+            return "vendor-tauri";
+          }
+
+          // React core
+          if (
+            id.includes("/react-dom/") ||
+            id.includes("/react/") ||
+            id.includes("/scheduler/")
+          ) {
+            return "vendor-react";
+          }
+        },
+      },
+    },
+  },
 }));

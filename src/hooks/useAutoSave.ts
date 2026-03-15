@@ -1,20 +1,23 @@
-import { useRef, useCallback, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useRef, useCallback, useEffect, useState } from "react";
 import { logError } from "../utils/logError";
+import { saveEntry } from "../api/entriesApi";
 
 type SavePayload = {
   entryId: string;
   content: string;
 };
 
+export type SaveStatus = "idle" | "pending" | "saved" | "error";
+
 export function useAutoSave() {
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentRef = useRef<string>("");
   const pendingSaveRef = useRef<SavePayload | null>(null);
   const persistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
 
   const persist = useCallback(async ({ entryId, content }: SavePayload) => {
-    await invoke("save_entry", { id: entryId, content });
+    await saveEntry(entryId, content);
   }, []);
 
   const enqueuePersist = useCallback(
@@ -26,7 +29,9 @@ export function useAutoSave() {
         .then(async () => {
           try {
             await persist(payload);
+            setSaveStatus("saved");
           } catch (err) {
+            setSaveStatus("error");
             logError("AutoSave", operation, err, { entryId: payload.entryId });
           }
         });
@@ -51,6 +56,7 @@ export function useAutoSave() {
       }
 
       pendingSaveRef.current = { entryId, content };
+      setSaveStatus("pending");
 
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(async () => {
@@ -102,6 +108,7 @@ export function useAutoSave() {
       saveTimeoutRef.current = null;
     }
     pendingSaveRef.current = null;
+    setSaveStatus("idle");
   }, []);
 
   useEffect(() => {
@@ -134,5 +141,5 @@ export function useAutoSave() {
     };
   }, [flushSave, enqueuePersist]);
 
-  return { saveTimeoutRef, contentRef, scheduleSave, flushSave, cancelSave };
+  return { saveTimeoutRef, contentRef, scheduleSave, flushSave, cancelSave, saveStatus };
 }
