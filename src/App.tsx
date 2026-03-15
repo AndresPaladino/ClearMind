@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import { Entry } from "./types";
 import Editor from "./components/Editor";
 import QuickSwitcher from "./components/QuickSwitcher";
+import DateNavigator from "./components/DateNavigator";
 import { showContextMenu } from "./components/ContextMenu";
 import EntryIndicator from "./components/EntryIndicator";
 import { createPortal } from "react-dom";
@@ -14,11 +15,20 @@ import { useAutoSave } from "./hooks/useAutoSave";
 import { logError } from "./utils/logError";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { colorizeReadonlyTags } from "./utils/colorizeReadonlyTags";
+import { extractTags } from "./utils/extractTags";
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.8;
 const ZOOM_STEP = 0.1;
 type FontMode = "sans" | "serif";
+
+interface RailDay {
+  key: string;
+  label: string;
+  firstEntryId: string;
+  count: number;
+  tags: string[];
+}
 
 function App() {
   const [currentEntry, setCurrentEntry] = useState<Entry | null>(null);
@@ -29,6 +39,7 @@ function App() {
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [isDeleteChordPressed, setIsDeleteChordPressed] = useState(false);
   const [pendingDeleteEntryId, setPendingDeleteEntryId] = useState<string | null>(null);
+  const [activeDayKey, setActiveDayKey] = useState<string | null>(null);
   const [isFontSwitching, setIsFontSwitching] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>(() => {
     const stored = localStorage.getItem("clearmind-font-family");
@@ -46,6 +57,7 @@ function App() {
   const fontSwitchEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialScrollRestoredRef = useRef(false);
   const zoomRef = useRef(1);
+  const scrollSyncFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle("font-serif", fontMode === "serif");
@@ -396,6 +408,43 @@ function App() {
     (e) => e.sealed && e.id !== currentEntry?.id
   );
 
+  const renderedEntries = useMemo(() => {
+    if (!currentEntry) return sealedEntries;
+    return [...sealedEntries, currentEntry];
+  }, [sealedEntries, currentEntry]);
+
+  const railDays = useMemo<RailDay[]>(() => {
+    const dayMap = new Map<string, RailDay>();
+
+    for (const entry of renderedEntries) {
+      const dayKey = entry.id.split("_")[0];
+      const existing = dayMap.get(dayKey);
+      if (!existing) {
+        dayMap.set(dayKey, {
+          key: dayKey,
+          label: entry.date,
+          firstEntryId: entry.id,
+          count: 1,
+          tags: extractTags(entry.content),
+        });
+      } else {
+        existing.count += 1;
+        const mergedTags = new Set([...existing.tags, ...extractTags(entry.content)]);
+        existing.tags = Array.from(mergedTags);
+      }
+    }
+
+    return Array.from(dayMap.values());
+  }, [renderedEntries]);
+
+  const firstRenderedEntryByDay = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const day of railDays) {
+      map.set(day.key, day.firstEntryId);
+    }
+    return map;
+  }, [railDays]);
+
   const handleFontToggle = useCallback(() => {
     if (isFontSwitching) return;
 
@@ -433,7 +482,78 @@ function App() {
       if (fontSwitchEndTimeoutRef.current) {
         clearTimeout(fontSwitchEndTimeoutRef.current);
       }
+
+      if (scrollSyncFrameRef.current !== null) {
+        cancelAnimationFrame(scrollSyncFrameRef.current);
+      }
     };
+  }, []);
+
+  useEffect(() => {
+    if (railDays.length === 0) {
+      setActiveDayKey(null);
+      return;
+    }
+
+    const container = document.querySelector(".scroll-container");
+    if (!container) return;
+
+    const syncActiveDay = () => {
+      const anchors = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-day-anchor='true']")
+      );
+      if (anchors.length === 0) {
+        const firstDay = railDays[0]?.key ?? null;
+        setActiveDayKey((prev) => (prev === firstDay ? prev : firstDay));
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      let nextActive = anchors[0].dataset.dayKey ?? railDays[0]?.key ?? null;
+
+      for (const anchor of anchors) {
+        const anchorTop = anchor.getBoundingClientRect().top - containerRect.top;
+        if (anchorTop <= 112) {
+          nextActive = anchor.dataset.dayKey ?? nextActive;
+        } else {
+          break;
+        }
+      }
+
+      setActiveDayKey((prev) => (prev === nextActive ? prev : nextActive));
+    };
+
+    const handleScroll = () => {
+      if (scrollSyncFrameRef.current !== null) return;
+
+      scrollSyncFrameRef.current = requestAnimationFrame(() => {
+        syncActiveDay();
+        scrollSyncFrameRef.current = null;
+      });
+    };
+
+    syncActiveDay();
+    container.addEventListener("scroll", handleScroll);
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (scrollSyncFrameRef.current !== null) {
+        cancelAnimationFrame(scrollSyncFrameRef.current);
+        scrollSyncFrameRef.current = null;
+      }
+    };
+  }, [railDays]);
+
+  const handleRailDaySelect = useCallback((dayKey: string) => {
+    const target = document.getElementById(`day-${dayKey}`);
+    if (!target) return;
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    target.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "start",
+    });
   }, []);
 
   const markdownComponents = useMemo(
@@ -529,8 +649,17 @@ function App() {
         <div className="content-root">
           <div className="column">
             {sealedEntries.map((entry) => (
+              <div key={entry.id}>
+                {firstRenderedEntryByDay.get(entry.id.split("_")[0]) === entry.id && (
+                  <div
+                    id={`day-${entry.id.split("_")[0]}`}
+                    className="day-anchor"
+                    data-day-anchor="true"
+                    data-day-key={entry.id.split("_")[0]}
+                    aria-hidden="true"
+                  />
+                )}
                 <div
-                  key={entry.id}
                   id={`entry-${entry.id}`}
                   className={`entry-sealed${isDeleteChordPressed ? " delete-mode" : ""}${
                     pendingDeleteEntryId === entry.id ? " delete-armed" : ""
@@ -566,22 +695,42 @@ function App() {
                     <ReactMarkdown components={markdownComponents}>{entry.content}</ReactMarkdown>
                   </div>
                 </div>
+              </div>
             ))}
 
-            <Editor
-              entry={currentEntry}
-              theme={resolvedTheme}
-              onContentChange={handleContentChange}
-              onSeal={handleSeal}
-              onTypingStart={() => setIsTyping(true)}
-              onTypingStop={() => setIsTyping(false)}
-              onEditorReady={(e) => {
-                lexicalEditorRef.current = e;
-              }}
-            />
+            {firstRenderedEntryByDay.get(currentEntry.id.split("_")[0]) === currentEntry.id && (
+              <div
+                id={`day-${currentEntry.id.split("_")[0]}`}
+                className="day-anchor"
+                data-day-anchor="true"
+                data-day-key={currentEntry.id.split("_")[0]}
+                aria-hidden="true"
+              />
+            )}
+
+            <div id={`entry-${currentEntry.id}`}>
+              <Editor
+                entry={currentEntry}
+                theme={resolvedTheme}
+                onContentChange={handleContentChange}
+                onSeal={handleSeal}
+                onTypingStart={() => setIsTyping(true)}
+                onTypingStop={() => setIsTyping(false)}
+                onEditorReady={(e) => {
+                  lexicalEditorRef.current = e;
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>
+
+      <DateNavigator
+        days={railDays}
+        activeDayKey={activeDayKey}
+        onSelectDay={handleRailDaySelect}
+        theme={resolvedTheme}
+      />
 
       {createPortal(
         <div style={{ position: "fixed", bottom: 20, right: 24, zIndex: 1200, display: "flex", alignItems: "center", gap: 8 }}>
