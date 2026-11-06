@@ -1,5 +1,7 @@
 # ClearMind
 
+> **This project is archived.** It continues as [Essais](https://github.com/AndresPaladino/essais), rewritten as a native Mac app.
+
 A focused writing app for macOS. No toolbars, no clutter — just a calm space to write.
 
 ClearMind strips away everything that isn't writing. It opens to a blank page, saves automatically, and stays out of your way.
